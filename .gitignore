@@ -38,7 +38,6 @@ tags
 
 # Project specific
 target
-ncmdump
 
 # Website
 site-build
@@ -47,5 +46,5 @@ site-build
 /go.sum
 
 # Go executables
-cmd/*/bin/
-cmd/*/*
+cmd/ncmdump/bin/*
+
