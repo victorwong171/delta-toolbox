@@ -217,8 +217,19 @@ func main() {
 		isTag := c.Bool("tag")
 		workerCount := c.Int("workers")
 
+		// 获取所有要处理的路径：如果有命令行参数，只使用命令行参数；否则使用配置文件中的source路径
+	allPaths := make([]string, 0)
+	if len(args) > 0 {
+		allPaths = append(allPaths, args...)
+	} else {
+		allPaths = append(allPaths, cfg.GetSourcePath()...)
+	}
+
 		files := make([]string, 0)
-		for _, path := range args {
+	for _, path := range allPaths {
+		if path == "" {
+			continue
+			}
 			if info, err := os.Stat(path); err != nil {
 				log.Printf("Path %s does not exist.", path)
 			} else if info.IsDir() {
