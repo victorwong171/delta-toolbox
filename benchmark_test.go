@@ -53,7 +53,7 @@ func BenchmarkXOR(b *testing.B) {
 	// 创建一个模拟的1MB数据块
 	data := make([]byte, 1024*1024)
 	box := buildKeyBox([]byte("testkey1234567890"))
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < len(data); j++ {

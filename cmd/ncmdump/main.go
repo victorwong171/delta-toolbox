@@ -146,7 +146,7 @@ func processFile(input string, outputDir string, isTag bool) {
 	if _, err := fp.Seek(0, io.SeekStart); err != nil {
 		panic(err)
 	}
-	
+
 	// 从文件中提取封面图片
 	cover, err := ncmdump.DumpCover(fp)
 	if err != nil {
@@ -185,7 +185,7 @@ type fileTask struct {
 }
 
 func main() {
-	cfg, err := config.NewLoader[*conf.Config]("conf", "/home/victor/scripts/ncmdump", "yaml").Load()
+	cfg, err := config.NewLoader[*conf.Config]("conf", "D:\\software\\buffer\\projects\\ncm-dumper\\cmd\\ncmdump\\conf", "yaml").Load()
 	if err != nil {
 		panic(err)
 	}
@@ -203,7 +203,7 @@ func main() {
 			Value: true,
 			Usage: "tag the output file from ncm file metadata.",
 		},
-		
+
 		&cli.IntFlag{
 			Name:  "workers",
 			Value: 4,
@@ -218,17 +218,17 @@ func main() {
 		workerCount := c.Int("workers")
 
 		// 获取所有要处理的路径：如果有命令行参数，只使用命令行参数；否则使用配置文件中的source路径
-	allPaths := make([]string, 0)
-	if len(args) > 0 {
-		allPaths = append(allPaths, args...)
-	} else {
-		allPaths = append(allPaths, cfg.GetSourcePath()...)
-	}
+		allPaths := make([]string, 0)
+		if len(args) > 0 {
+			allPaths = append(allPaths, args...)
+		} else {
+			allPaths = append(allPaths, cfg.GetSourcePath()...)
+		}
 
 		files := make([]string, 0)
-	for _, path := range allPaths {
-		if path == "" {
-			continue
+		for _, path := range allPaths {
+			if path == "" {
+				continue
 			}
 			if info, err := os.Stat(path); err != nil {
 				log.Printf("Path %s does not exist.", path)
@@ -283,5 +283,4 @@ func main() {
 		return nil
 	}
 	app.Run(os.Args)
-	return
 }

@@ -15,7 +15,7 @@ import (
 var (
 	aesCoreKey   = []byte{0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57}
 	aesModifyKey = []byte{0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28}
-	
+
 	// bufferPool is used to reuse read buffers, reducing memory allocation
 	bufferPool = sync.Pool{
 		New: func() interface{} {
@@ -211,12 +211,25 @@ func DumpToWriter(fp *os.File, w io.Writer) error {
 		return err
 	}
 
-	if _, err := DumpCover(fp); err != nil {
+	// Jump over headers to position the file pointer at the start of the actual audio data
+	if _, err := fp.Seek(4*2+2, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := readLenAndData(fp); err != nil {
+		return err
+	}
+	if _, err := readLenAndData(fp); err != nil {
+		return err
+	}
+	if _, err := fp.Seek(9, io.SeekCurrent); err != nil {
+		return err
+	}
+	if _, err := readLenAndData(fp); err != nil {
 		return err
 	}
 
 	box := buildKeyBox(deKeyData)
-	
+
 	// Precompute lookup table for XOR operation to avoid repeated calculations
 	xorLookup := make([]byte, 256)
 	for j := 0; j < 256; j++ {
@@ -228,6 +241,7 @@ func DumpToWriter(fp *os.File, w io.Writer) error {
 	tb := bufferPool.Get().([]byte)
 	defer bufferPool.Put(tb) // Return buffer to pool when done
 
+	streamOffset := 0
 	for {
 		readSize, err := fp.Read(tb)
 		if err != nil {
@@ -239,15 +253,17 @@ func DumpToWriter(fp *os.File, w io.Writer) error {
 			}
 		}
 
-		// Only process the bytes we actually read, using precomputed lookup table
+		// Process the bytes using precomputed lookup table and global stream offset
 		for i := 0; i < readSize; i++ {
-			j := byte((i + 1) & 0xff)
+			j := byte((streamOffset + i + 1) & 0xff)
 			tb[i] ^= xorLookup[j]
 		}
 
 		if _, err := w.Write(tb[:readSize]); err != nil {
 			return err
 		}
+
+		streamOffset += readSize
 	}
 
 	return nil
