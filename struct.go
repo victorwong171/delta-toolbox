@@ -1,6 +1,7 @@
 package ncmdump
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -18,44 +19,52 @@ type Artist struct {
 
 // UnmarshalJSON handles various artist metadata formats (array of arrays, objects, strings) robustly
 func (a *Artist) UnmarshalJSON(data []byte) error {
-	// 1. Try to unmarshal as the classic array of [name, id]
-	var v []interface{}
-	if err := json.Unmarshal(data, &v); err == nil && len(v) >= 2 {
-		if nameStr, ok := v[0].(string); ok {
-			a.Name = nameStr
-		} else {
-			a.Name = fmt.Sprintf("%v", v[0])
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("empty json data")
+	}
+
+	switch trimmed[0] {
+	case '[':
+		// 1. Try to unmarshal as the classic array of [name, id]
+		var v []interface{}
+		if err := json.Unmarshal(trimmed, &v); err == nil && len(v) >= 2 {
+			if nameStr, ok := v[0].(string); ok {
+				a.Name = nameStr
+			} else {
+				a.Name = fmt.Sprintf("%v", v[0])
+			}
+			a.Id = v[1]
+			return nil
 		}
-		a.Id = v[1]
-		return nil
+	case '"':
+		// 2. Try to unmarshal as a single string
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err == nil {
+			a.Name = s
+			a.Id = nil
+			return nil
+		}
+	case '{':
+		// 3. Try to unmarshal as an object {"name": "...", "id": ...}
+		var obj struct {
+			Name string `json:"name"`
+			Id   any    `json:"id"`
+		}
+		if err := json.Unmarshal(trimmed, &obj); err == nil {
+			a.Name = obj.Name
+			a.Id = obj.Id
+			return nil
+		}
 	}
 
-	// 2. Try to unmarshal as a single string
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		a.Name = s
-		a.Id = nil
-		return nil
-	}
-
-	// 3. Try to unmarshal as an object {"name": "...", "id": ...}
-	var obj struct {
-		Name string `json:"name"`
-		Id   any    `json:"id"`
-	}
-	if err := json.Unmarshal(data, &obj); err == nil {
-		a.Name = obj.Name
-		a.Id = obj.Id
-		return nil
-	}
-
-	return fmt.Errorf("failed to unmarshal Artist from %s", string(data))
+	return fmt.Errorf("failed to unmarshal Artist from %s", string(trimmed))
 }
 
 // @ref https://music.163.com/#/song?id={id}
 type Meta struct {
-	Id       any    `json:"musicId"`
-	Name     string `json:"musicName"`
+	Id       any      `json:"musicId"`
+	Name     string   `json:"musicName"`
 	*Album   `json:",inline"`
 	Artists  []Artist `json:"artist"`
 	BitRate  any      `json:"bitrate"`
@@ -68,7 +77,7 @@ type Meta struct {
 func (m *Meta) UnmarshalJSON(data []byte) error {
 	type Alias Meta
 	aux := &struct {
-		Artists any `json:"artist"`
+		Artists json.RawMessage `json:"artist"`
 		*Alias
 	}{
 		Alias: (*Alias)(m),
@@ -78,29 +87,27 @@ func (m *Meta) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if aux.Artists == nil {
+	if len(aux.Artists) == 0 || string(aux.Artists) == "null" {
 		return nil
 	}
 
 	// Unmarshal Artists robustly based on actual type
-	if list, ok := aux.Artists.([]interface{}); ok {
-		m.Artists = make([]Artist, 0, len(list))
-		for _, item := range list {
-			itemBytes, err := json.Marshal(item)
-			if err != nil {
-				continue
-			}
-			var art Artist
-			if err := json.Unmarshal(itemBytes, &art); err == nil {
-				m.Artists = append(m.Artists, art)
-			}
-		}
-	} else if str, ok := aux.Artists.(string); ok {
+	var list []Artist
+	if err := json.Unmarshal(aux.Artists, &list); err == nil {
+		m.Artists = list
+		return nil
+	}
+
+	var art Artist
+	if err := json.Unmarshal(aux.Artists, &art); err == nil {
+		m.Artists = []Artist{art}
+		return nil
+	}
+
+	var str string
+	if err := json.Unmarshal(aux.Artists, &str); err == nil {
 		m.Artists = []Artist{{Name: str, Id: nil}}
-	} else if obj, ok := aux.Artists.(map[string]interface{}); ok {
-		name, _ := obj["name"].(string)
-		id := obj["id"]
-		m.Artists = []Artist{{Name: name, Id: id}}
+		return nil
 	}
 
 	return nil

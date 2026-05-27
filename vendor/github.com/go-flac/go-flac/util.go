@@ -86,6 +86,40 @@ func readFLACHead(f io.Reader) error {
 	if err != nil {
 		return err
 	}
+
+	// 支持跳过 FLAC 文件开头可能存在的 ID3v2 标签
+	if string(buffer[:3]) == "ID3" {
+		headerRest := make([]byte, 6)
+		if _, err := io.ReadFull(f, headerRest); err != nil {
+			return err
+		}
+		flags := headerRest[1]
+		size := int32(headerRest[2]&0x7f)<<21 |
+			int32(headerRest[3]&0x7f)<<14 |
+			int32(headerRest[4]&0x7f)<<7 |
+			int32(headerRest[5]&0x7f)
+		if (flags & 0x10) != 0 {
+			size += 10
+		}
+		discarded := 0
+		discardBuf := make([]byte, 4096)
+		for discarded < int(size) {
+			toRead := int(size) - discarded
+			if toRead > len(discardBuf) {
+				toRead = len(discardBuf)
+			}
+			n, err := io.ReadFull(f, discardBuf[:toRead])
+			discarded += n
+			if err != nil {
+				return err
+			}
+		}
+		_, err = io.ReadFull(f, buffer)
+		if err != nil {
+			return err
+		}
+	}
+
 	if string(buffer) != "fLaC" {
 		return ErrorNoFLACHeader
 	}

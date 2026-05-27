@@ -85,6 +85,9 @@ func Decode(fp *os.File) ([]byte, error) {
 	}
 
 	keyData, err := readLenAndData(fp)
+	if err != nil {
+		return nil, err
+	}
 	xorBytes(keyData, 0x64)
 
 	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData)
@@ -93,6 +96,9 @@ func Decode(fp *os.File) ([]byte, error) {
 	}
 
 	// 17 = len("neteasecloudmusic")
+	if len(deKeyData) < 17 {
+		return nil, fmt.Errorf("decrypted key data is too short: got %d bytes, need at least 17", len(deKeyData))
+	}
 	return deKeyData[17:], nil
 }
 

@@ -9,7 +9,13 @@ import (
 
 func _PKCS7UnPadding(src []byte) []byte {
 	length := len(src)
+	if length == 0 {
+		return nil
+	}
 	unpadding := int(src[length-1])
+	if unpadding > length || unpadding <= 0 {
+		return nil
+	}
 	return src[:(length - unpadding)]
 }
 

@@ -120,22 +120,24 @@ func processFile(input string, outputDir string, isTag bool) {
 	// 获取输出文件的完整路径
 	output := getOutputFullPath(input, outputDir, meta.Format)
 
-	// 创建输出文件
-	outFile, err := os.Create(output)
-	if err != nil {
-		panic(err)
-	}
-	defer outFile.Close()
+	// 创建输出文件并解密写入（使用匿名函数确保文件句柄在后续的Tag操作前已被正确关闭和刷盘）
+	writeErr := func() error {
+		outFile, err := os.Create(output)
+		if err != nil {
+			return err
+		}
+		defer outFile.Close()
 
-	// 重置文件指针到开始位置
-	if _, err := fp.Seek(0, io.SeekStart); err != nil {
-		panic(err)
-	}
+		// 重置文件指针到开始位置
+		if _, err := fp.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
 
-	// 直接将解密数据写入文件，减少内存占用
-	if err := ncmdump.DumpToWriter(fp, outFile); err != nil {
-		// 若提取音频数据失败，触发 panic
-		panic(err)
+		// 直接将解密数据写入文件，减少内存占用
+		return ncmdump.DumpToWriter(fp, outFile)
+	}()
+	if writeErr != nil {
+		panic(writeErr)
 	}
 
 	// 记录文件处理成功的信息
@@ -253,7 +255,15 @@ func main() {
 		}
 
 		// 创建任务通道和结果通道
-		taskChan := make(chan fileTask, len(ncmFiles))
+		// 使用带有背压机制的较小缓冲区通道，防止因文件数量巨大导致无谓的内存分配
+		bufferSize := workerCount * 2
+		if bufferSize < 100 {
+			bufferSize = 100
+		}
+		if bufferSize > len(ncmFiles) {
+			bufferSize = len(ncmFiles)
+		}
+		taskChan := make(chan fileTask, bufferSize)
 		wg := sync.WaitGroup{}
 
 		// 启动worker池
