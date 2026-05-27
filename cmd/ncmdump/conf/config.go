@@ -4,7 +4,8 @@ type Config struct {
 	Path struct {
 		Source []string `yaml:"source"`
 		Target string   `yaml:"target"`
-	}
+	} `yaml:"path"`
+	Processors []string `yaml:"processors"`
 }
 
 func (c *Config) GetSourcePath() []string {
@@ -19,4 +20,11 @@ func (c *Config) GetTargetPath() string {
 		return ""
 	}
 	return c.Path.Target
+}
+
+func (c *Config) GetProcessors() []string {
+	if c == nil {
+		return nil
+	}
+	return c.Processors
 }
