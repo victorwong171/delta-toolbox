@@ -1,11 +1,11 @@
-module github.com/yoki123/ncmdump
+module github.com/victorwang171/ncmdump
 
 require (
 	github.com/FatWang1/fatwang-go-utils v0.0.0-20250504203805-de62b8f649c7
 	github.com/bogem/id3v2 v1.2.0
-	github.com/go-flac/flacpicture v0.3.0
-	github.com/go-flac/flacvorbis v0.2.0
-	github.com/go-flac/go-flac v1.0.0
+	github.com/go-flac/flacpicture/v2 v2.0.2
+	github.com/go-flac/flacvorbis/v2 v2.0.2
+	github.com/go-flac/go-flac/v2 v2.0.4
 	github.com/urfave/cli/v2 v2.27.6
 )
 

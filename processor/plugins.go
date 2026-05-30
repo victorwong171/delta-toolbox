@@ -5,27 +5,27 @@ import (
 	"os"
 )
 
-// DeleteSourceProcessor deletes the original NCM file after successful conversion.
+// DeleteSourceProcessor 转换成功后删除 .ncm 加密源文件的后处理插件
 type DeleteSourceProcessor struct{}
 
-// Process verifies the target file is intact and then removes the original source file.
+// Process 执行删除源文件逻辑，在删除前校验目标生成的音频文件大小完整且未损坏
 func (p *DeleteSourceProcessor) Process(src, dst string) error {
-	// First check the final destination file
+	// 1. 首先检查最终生成的音频文件大小元数据
 	info, err := os.Stat(dst)
 	if err != nil {
-		// If dst does not exist, check if tempDst (.tmp) exists (in case rename hasn't happened yet)
+		// 若 dst 尚未移动完成，尝试检查临时输出文件 (.tmp) 是否完整
 		info, err = os.Stat(dst + ".tmp")
 		if err != nil {
 			return fmt.Errorf("target file not found: %w", err)
 		}
 	}
 
-	// Verify that the output file is not empty
+	// 2. 校验文件完整性，防止写入 0 字节的空音频文件
 	if info.Size() == 0 {
 		return fmt.Errorf("target file is empty, skipping source deletion")
 	}
 
-	// Safely remove the original .ncm source file
+	// 3. 安全地删除原始加密的 .ncm 源文件
 	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove source file %q: %w", src, err)
 	}
@@ -33,29 +33,28 @@ func (p *DeleteSourceProcessor) Process(src, dst string) error {
 	return nil
 }
 
-// SizeComparisonProcessor compares the size of the generated file with any pre-existing
-// file of the same name and only keeps the larger one.
+// SizeComparisonProcessor 目标文件夹中存在同名音频文件时，仅保留体积（Size）更大那个的后处理插件
 type SizeComparisonProcessor struct{}
 
-// Process compares the tempDst (.tmp) size with the existing dst and retains the larger one.
+// Process 对比临时解密文件 (.tmp) 与已存在的音频文件体积，只保留更大的文件
 func (p *SizeComparisonProcessor) Process(src, dst string) error {
 	tempDst := dst + ".tmp"
 
-	// Stat the temporary decrypted file
+	// 1. 获取本次解密临时生成的音频文件属性
 	tempInfo, err := os.Stat(tempDst)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Temp file doesn't exist, likely already handled/renamed by another processor
+			// 若临时文件不存在，表明已经被其他前置后处理链重命名或消费完毕，直接跳过
 			return nil
 		}
 		return fmt.Errorf("failed to stat temporary file: %w", err)
 	}
 
-	// Stat the pre-existing destination file
+	// 2. 检查目标位置是否已存在同名的音乐文件
 	destInfo, err := os.Stat(dst)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Destination doesn't exist yet, simply rename temp file to final destination
+			// 若同名音乐文件不存在，则直接原子重命名将临时文件移动为最终音频文件
 			if err := os.Rename(tempDst, dst); err != nil {
 				return fmt.Errorf("failed to rename temporary file to destination: %w", err)
 			}
@@ -64,10 +63,10 @@ func (p *SizeComparisonProcessor) Process(src, dst string) error {
 		return fmt.Errorf("failed to stat destination file: %w", err)
 	}
 
-	// Both exist, compare sizes and retain the larger one
+	// 3. 同名文件均存在，对比两者体积并只保留大体积文件
 	if tempInfo.Size() > destInfo.Size() {
-		// Target is larger, overwrite existing file
-		// On Windows, we must remove the target first to prevent "file already exists" rename error
+		// 本次转换生成的文件更大，强行覆盖已有的较小文件
+		// 在 Windows 系统下，重命名前必须先显式 Remove 删除已有目标，否则会引发 "file already exists" 错误
 		if err := os.Remove(dst); err != nil {
 			return fmt.Errorf("failed to remove smaller destination file: %w", err)
 		}
@@ -75,7 +74,7 @@ func (p *SizeComparisonProcessor) Process(src, dst string) error {
 			return fmt.Errorf("failed to replace destination with larger temporary file: %w", err)
 		}
 	} else {
-		// Existing file is larger or equal, discard the temporary decrypted file
+		// 已存在的同名文件更大，舍弃本次转换生成的较小临时文件，直接将其删除
 		if err := os.Remove(tempDst); err != nil {
 			return fmt.Errorf("failed to remove smaller temporary file: %w", err)
 		}
