@@ -1,0 +1,36 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "运行 NCM 音频转换解密工具",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/ncmdump",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "转换当前打开的 NCM 文件 (活动文件)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/ncmdump",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "${file}"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "Debug Active File (调试当前打开的单文件)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
