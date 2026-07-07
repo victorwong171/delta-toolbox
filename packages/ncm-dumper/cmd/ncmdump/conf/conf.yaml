@@ -1,0 +1,7 @@
+path:
+    source:
+        - E:/system/Music/VipSongsDownload/
+    target: E:/system/Music/
+processors:
+    - size_comparison
+    - delete_source
