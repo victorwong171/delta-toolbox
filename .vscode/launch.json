@@ -1,0 +1,136 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "[net-inspect] 3. Clash Verge 节点测速 (指定测试目标)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/net-inspect",
+            "cwd": "${workspaceFolder}/packages/net-inspect",
+            "args": [
+                "-clash",
+                "-clash-concurrency",
+                "25",
+                "-clash-timeout",
+                "2000",
+                "-clash-hosts",
+                "https://generativelanguage.googleapis.com,https://drivers.amd.com,http://objects.githubusercontent.com,http://91.108.56.199"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[net-inspect] 1. 运行本地网络诊断 (默认交互模式)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/net-inspect",
+            "cwd": "${workspaceFolder}/packages/net-inspect",
+            "args": [],
+            "console": "integratedTerminal", // 必须使用集成终端以支持回车确认等交互输入
+            "showLog": false
+        },
+        {
+            "name": "[net-inspect] 2. Clash Verge 节点测速 (全自动探测模式)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/net-inspect",
+            "cwd": "${workspaceFolder}/packages/net-inspect",
+            "args": [
+                "-clash"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[net-inspect] 4. Clash Verge 节点测速 (手动指定 API 与密钥)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/net-inspect",
+            "cwd": "${workspaceFolder}/packages/net-inspect",
+            "args": [
+                "-clash",
+                "-clash-api",
+                "127.0.0.1:7897",
+                "-clash-secret",
+                "your_secret_token"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[net-inspect] 5. Clash Verge 节点测速 (高并发调优)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/net-inspect",
+            "cwd": "${workspaceFolder}/packages/net-inspect",
+            "args": [
+                "-clash",
+                "-clash-concurrency",
+                "25",
+                "-clash-timeout",
+                "2000"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[LFS] 运行 LFS 本地文件存储服务器",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/LFS/cmd/lfs-server",
+            "cwd": "${workspaceFolder}/packages/LFS",
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[ncm-dumper] 运行 NCM 音频转换解密工具",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/ncm-dumper/cmd/ncmdump",
+            "cwd": "${workspaceFolder}/packages/ncm-dumper",
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[ncm-dumper] 转换当前打开的 NCM 文件 (活动文件)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/ncm-dumper/cmd/ncmdump",
+            "cwd": "${workspaceFolder}/packages/ncm-dumper",
+            "args": [
+                "${file}"
+            ],
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "[game-prioritizer] 运行 CPU 游戏优先级优化工具",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/packages/game-prioritizer",
+            "cwd": "${workspaceFolder}/packages/game-prioritizer",
+            "console": "integratedTerminal",
+            "showLog": false
+        },
+        {
+            "name": "Debug Active File (调试当前打开的单文件)",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}

@@ -4,5 +4,5 @@ if [ ! -f go.work ]; then
     go work init
 fi
 echo "Adding packages to Go workspace..."
-go work use ./packages/ncm-dumper ./packages/net-inspect ./packages/LFS
+go work use ./packages/ncm-dumper ./packages/net-inspect ./packages/LFS ./packages/game-prioritizer
 echo "Workspace initialized successfully."

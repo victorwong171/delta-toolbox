@@ -1,0 +1,6 @@
+# Local configuration
+config.json
+
+# Binaries
+*.exe
+game_prioritizer
