@@ -15,6 +15,7 @@ type Config struct {
 	RestoreOnFocusLoss  bool     `json:"restore_on_focus_loss"`
 	Blacklist           []string `json:"blacklist"`
 	Whitelist           []string `json:"whitelist"`
+	SwitchAudioDevice   string   `json:"switch_audio_device"`
 }
 
 func DefaultConfig() *Config {
@@ -24,6 +25,7 @@ func DefaultConfig() *Config {
 		FuzzyTolerance:     8,
 		BoostAnyForeground: false,
 		RestoreOnFocusLoss: true,
+		SwitchAudioDevice:  "Realtek High Definition Audio",
 		Blacklist: []string{
 			// Browsers
 			"chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe",

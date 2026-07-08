@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 )
 
 func main() {
@@ -26,7 +23,7 @@ func main() {
 	}
 
 	// CLI Flag overrides
-	intervalFlag := flag.Int("interval", config.PollingIntervalMs, "Polling interval in milliseconds")
+	intervalFlag := flag.Int("interval", config.PollingIntervalMs, "Polling interval in milliseconds (ignored in one-shot mode)")
 	priorityFlag := flag.String("priority", config.BoostPriority, "Target CPU priority class (High or AboveNormal)")
 	boostAllFlag := flag.Bool("boost-all", config.BoostAnyForeground, "Boost any active foreground process that isn't blacklisted")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose debug logging")
@@ -46,23 +43,16 @@ func main() {
 	config.BoostPriority = *priorityFlag
 	config.BoostAnyForeground = *boostAllFlag
 
-	// Create and start prioritizer
+	// Create prioritizer
 	osPrioritizer := NewOSPrioritizer()
 	prioritizer := NewPrioritizer(config, osPrioritizer)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	slog.Info("Running game prioritizer in one-shot mode...")
+	err = prioritizer.RunOnce()
+	if err != nil {
+		slog.Error("Prioritization failed", "error", err)
+		os.Exit(1)
+	}
 
-	// Handle OS interrupt signals (SIGINT/SIGTERM) to ensure priority is restored upon exit
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		sig := <-sigChan
-		slog.Info("Received termination signal, shutting down...", "signal", sig)
-		cancel()
-	}()
-
-	slog.Info("CPU Game Prioritizer initialized successfully. Keep this window running in the background.")
-	prioritizer.Start(ctx)
+	slog.Info("Prioritization completed successfully")
 }

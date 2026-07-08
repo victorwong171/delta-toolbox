@@ -37,3 +37,7 @@ func (s *StubPrioritizer) SetProcessPriority(pid uint32, priority uint32) error 
 func (s *StubPrioritizer) GetPriorityClassValue(name string) uint32 {
 	return 0
 }
+
+func (s *StubPrioritizer) SwitchAudioDevice(name string) error {
+	return fmt.Errorf("unsupported platform")
+}
