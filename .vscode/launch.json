@@ -18,7 +18,7 @@
                 "-clash-timeout",
                 "2000",
                 "-clash-hosts",
-                "https://generativelanguage.googleapis.com,https://drivers.amd.com,http://objects.githubusercontent.com,http://91.108.56.199"
+                "https://generativelanguage.googleapis.com,http://objects.githubusercontent.com,http://91.108.56.199,https://surrit.com,https://drivers.amd.com"
             ],
             "console": "integratedTerminal",
             "showLog": false
