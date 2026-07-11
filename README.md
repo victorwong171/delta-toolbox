@@ -11,7 +11,8 @@
 ├── packages/               # 工具链与服务子项目目录
 │   ├── ncm-dumper/         # NCM 格式音频解密转码工具
 │   ├── net-inspect/        # 网络连通性与 Clash 延迟诊断工具
-│   └── LFS/                # 大文件存储与传输服务
+│   ├── LFS/                # 大文件存储与传输服务
+│   └── game-prioritizer/   # 游戏/进程 CPU 优先级优化工具 (Windows)
 ├── init_workspace.bat      # Windows 环境一键初始化 Go 工作区脚本
 ├── init_workspace.sh       # Linux/macOS 环境一键初始化 Go 工作区脚本
 ├── .gitignore              # 忽略本地开发的 go.work 配置文件
@@ -64,6 +65,10 @@ go work sync
 * **编译 `LFS` 服务端**:
   ```bash
   go build -o bin/lfs-server.exe ./packages/LFS/cmd/lfs-server
+  ```
+* **运行 `game-prioritizer`**:
+  ```bash
+  go run ./packages/game-prioritizer
   ```
 
 ### 2. 新增子项目
