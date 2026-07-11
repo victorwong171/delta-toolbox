@@ -105,9 +105,9 @@ go work sync
 
 * **拉取子仓的最新改动 (以 ncm-dumper 为例)**:
   ```bash
-  git subtree pull --prefix=packages/ncm-dumper D:/software/buffer/projects/ncm-dumper master --squash
+  git subtree pull --prefix=packages/ncm-dumper <ncm-dumper-repo-url> master --squash
   ```
 * **将大仓中的改动推回子仓**:
   ```bash
-  git subtree push --prefix=packages/ncm-dumper D:/software/buffer/projects/ncm-dumper master
+  git subtree push --prefix=packages/ncm-dumper <ncm-dumper-repo-url> master
   ```

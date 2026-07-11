@@ -101,7 +101,7 @@ ncmdump [flags] [files.../dirs...]
 
 ```bash
 # 示例：指定输出目录和并发数
-ncmdump --output=D:\music_dump --workers=8 D:\music D:\music\song.ncm
+ncmdump --output=/path/to/output --workers=8 /path/to/ncm /path/to/ncm/song.ncm
 ```
 
 ### 方式二：配置文件驱动
