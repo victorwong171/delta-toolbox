@@ -57,9 +57,10 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		// BCE optimization: assert slice bounds before entering the loop
 		_ = p[n-1]
 		_ = dr.xorLookup[255]
+		offset := byte(dr.streamOffset)
 		for i := 0; i < n; i++ {
-			j := byte((dr.streamOffset + i + 1) & 0xff)
-			p[i] ^= dr.xorLookup[j]
+			offset++
+			p[i] ^= dr.xorLookup[offset]
 		}
 		dr.streamOffset += n
 	}
