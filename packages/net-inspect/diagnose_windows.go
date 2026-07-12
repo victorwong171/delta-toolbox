@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -69,25 +70,69 @@ func isAdminOrRoot() bool {
 }
 
 func getNetAdapters() ([]Adapter, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-NetAdapter | Select-Object Name, InterfaceDescription, LinkSpeed, Status | ConvertTo-Json")
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-NetAdapter | ForEach-Object {
+		$config = Get-NetIPConfiguration -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+		$ipv4 = $config.IPv4Address.IPAddress
+		if ($ipv4 -is [array]) { $ipv4 = $ipv4[0] }
+		$gw = $config.IPv4DefaultGateway.NextHop
+		if ($gw -is [array]) { $gw = $gw[0] }
+		[PSCustomObject]@{
+			Index                = $_.InterfaceIndex
+			Name                 = $_.Name
+			InterfaceDescription = $_.InterfaceDescription
+			LinkSpeed            = $_.LinkSpeed
+			Status               = $_.Status
+			IPv4Address          = $ipv4
+			Gateway              = $gw
+		}
+	} | ConvertTo-Json`)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
 
-	jsonBytes := out.Bytes()
-	trimmed := strings.TrimSpace(string(jsonBytes))
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		trimmed = "[" + trimmed + "]"
-		jsonBytes = []byte(trimmed)
-	}
-
-	var adapters []Adapter
-	if err := json.Unmarshal(jsonBytes, &adapters); err != nil {
+	var adapters AdapterList
+	if err := json.Unmarshal(out.Bytes(), &adapters); err != nil {
 		return nil, err
 	}
-	return adapters, nil
+	return []Adapter(adapters), nil
+}
+
+func probePing(sourceIP, target string) (time.Duration, float64) {
+	if sourceIP == "" || target == "" {
+		return 0, 100.0
+	}
+	isIPv6 := strings.Contains(sourceIP, ":")
+	var cmdStr string
+	if isIPv6 {
+		cmdStr = fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping -6 -n 2 -w 500 -S %s %s", sourceIP, target)
+	} else {
+		cmdStr = fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping -n 2 -w 500 -S %s %s", sourceIP, target)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", cmdStr)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	_ = cmd.Run()
+	return parsePingOutput(out.String())
+}
+
+func runFinalGatewayPing(report *DiagnosticReport) {
+	if report.GatewayIP == "" || report.SelectedAdapterIP == "" {
+		return
+	}
+	isIPv6 := strings.Contains(report.SelectedAdapterIP, ":")
+	var cmdStr string
+	if isIPv6 {
+		cmdStr = fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping -6 -n 4 -S %s %s", report.SelectedAdapterIP, report.GatewayIP)
+	} else {
+		cmdStr = fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping -n 4 -S %s %s", report.SelectedAdapterIP, report.GatewayIP)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", cmdStr)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	_ = cmd.Run()
+	report.GatewayLatency, report.GatewayLoss = parsePingOutput(out.String())
 }
 
 func getProcessMap() (map[int]string, error) {
@@ -149,8 +194,19 @@ func parseProxySettings(output string) (bool, string, string) {
 	return enabled, server, pacUrl
 }
 
-func testPingDF(target string, size int) (bool, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping %s -f -n 1 -l %d", target, size))
+func testPingDF(target string, size int, sourceIP string) (bool, error) {
+	var cmdStr string
+	if sourceIP != "" {
+		isIPv6 := strings.Contains(sourceIP, ":")
+		if isIPv6 {
+			cmdStr = fmt.Sprintf("ping -6 %s -f -n 1 -l %d -S %s", target, size, sourceIP)
+		} else {
+			cmdStr = fmt.Sprintf("ping %s -f -n 1 -l %d -S %s", target, size, sourceIP)
+		}
+	} else {
+		cmdStr = fmt.Sprintf("ping %s -f -n 1 -l %d", target, size)
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; %s", cmdStr))
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	_ = cmd.Run()
@@ -176,58 +232,49 @@ func diagnoseLink(report *DiagnosticReport) {
 		report.GatewayIP = "192.168.1.1"
 	}
 
-	pingCmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ping -n 4 %s", report.GatewayIP))
-	var pingOut bytes.Buffer
-	pingCmd.Stdout = &pingOut
-	_ = pingCmd.Run()
-	avgLat, loss := parsePingOutput(pingOut.String())
-	report.GatewayLatency = avgLat
-	report.GatewayLoss = loss
-
-	if adapters, err := getNetAdapters(); err == nil {
-		for _, ad := range adapters {
-			if ad.Status == "Up" && !strings.Contains(ad.InterfaceDescription, "Virtual") && !strings.Contains(ad.InterfaceDescription, "Tunnel") && !strings.Contains(ad.InterfaceDescription, "VMware") && !strings.Contains(ad.InterfaceDescription, "VirtualBox") {
-				report.AdapterName = ad.Name
-				report.AdapterSpeed = ad.LinkSpeed
-				report.AdapterLinkOK = true
-				break
-			}
-		}
-		if report.AdapterName == "" {
-			for _, ad := range adapters {
-				if ad.Status == "Up" {
-					report.AdapterName = ad.Name
-					report.AdapterSpeed = ad.LinkSpeed
-					report.AdapterLinkOK = true
-					break
-				}
-			}
-		}
+	adapters, err := getNetAdapters()
+	if err != nil {
+		printColored("danger", "Failed to retrieve network adapters: "+err.Error())
+		return
 	}
 
-	if report.GatewayLoss == 0 {
-		printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
-	} else if report.GatewayLoss < 100 {
-		printColored("warning", getT(ResultWarning), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
-	} else {
-		printColored("danger", getT(ResultDanger), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, "N/A", "100%"))
-	}
+	var wg sync.WaitGroup
+	probedAdapters := make([]Adapter, len(adapters))
+	copy(probedAdapters, adapters)
 
-	if report.AdapterName != "" {
-		isDegraded := false
-		if strings.Contains(report.AdapterSpeed, "Mbps") {
-			var speedVal int
-			_, _ = fmt.Sscanf(report.AdapterSpeed, "%d", &speedVal)
-			if speedVal <= 100 && (strings.Contains(strings.ToLower(report.AdapterName), "以太网") || strings.Contains(strings.ToLower(report.AdapterName), "ethernet")) {
-				isDegraded = true
+	for i := range probedAdapters {
+		ad := &probedAdapters[i]
+		if ad.Status != "Up" || ad.IPv4Address == "" {
+			continue
+		}
+
+		wg.Add(1)
+		go func(a *Adapter) {
+			defer wg.Done()
+			gwLatency := time.Duration(0)
+			gwLoss := 100.0
+			internetOK := false
+
+			// Probe gateway
+			if a.Gateway != "" {
+				gwLatency, gwLoss = probePing(a.IPv4Address, a.Gateway)
 			}
-		}
-		if isDegraded {
-			printColored("warning", getT(ResultWarning), fmt.Sprintf(getT(LinkSpeed), report.AdapterName, report.AdapterSpeed, "Degraded (Negotiated at <=100Mbps Ethernet)"))
-		} else {
-			printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(LinkSpeed), report.AdapterName, report.AdapterSpeed, "OK"))
-		}
+
+			// Probe internet
+			_, pubLoss := probePing(a.IPv4Address, "223.5.5.5")
+			if pubLoss < 100.0 {
+				internetOK = true
+			}
+
+			a.GatewayLatency = gwLatency
+			a.GatewayLoss = gwLoss
+			a.InternetOK = internetOK
+			a.IsOK = (gwLoss < 100.0 || internetOK)
+		}(ad)
 	}
+	wg.Wait()
+
+	report.Adapters = probedAdapters
 }
 
 func diagnoseNAT(report *DiagnosticReport) {
@@ -300,7 +347,18 @@ func diagnoseNAT(report *DiagnosticReport) {
 		printColored("success", getT(ResultSuccess), "No CLOSE_WAIT socket leaks detected.")
 	}
 
-	traceCmd := exec.Command("tracert", "-d", "-h", "3", "8.8.8.8")
+	var traceCmd *exec.Cmd
+	if report.SelectedAdapterIP != "" {
+		isIPv6 := strings.Contains(report.SelectedAdapterIP, ":")
+		if isIPv6 {
+			traceCmd = exec.Command("tracert", "-6", "-S", report.SelectedAdapterIP, "-d", "-h", "3", "2001:4860:4860::8888")
+		} else {
+			traceCmd = exec.Command("tracert", "-d", "-h", "3", "8.8.8.8")
+			printColored("info", " [i] Windows环境下IPv4路由跟踪由系统默认路由托管，无法强制绑定源网卡。")
+		}
+	} else {
+		traceCmd = exec.Command("tracert", "-d", "-h", "3", "8.8.8.8")
+	}
 	var traceOut bytes.Buffer
 	traceCmd.Stdout = &traceOut
 	_ = traceCmd.Run()

@@ -53,6 +53,11 @@ const (
 	AdminRequired
 	FixConfirmHint
 	FixSkipped
+	AdapterListHeader
+	AdapterListItem
+	DefaultAdapterPrompt
+	SelectAdapterPrompt
+	InvalidAdapterIndex
 )
 
 var translations = map[Lang]map[TransKey]string{
@@ -89,6 +94,11 @@ var translations = map[Lang]map[TransKey]string{
 		AdminRequired:  "此操作需要管理员权限！请右键以管理员身份运行此程序。",
 		FixConfirmHint: "请输入 yes 或 no 确认！",
 		FixSkipped:     "已跳过此项修复。",
+		AdapterListHeader:   "检测到的网卡列表 / Detected Network Adapters:",
+		AdapterListItem:     "[%d] 网卡: %-25s | IP: %-15s | 网关: %-15s | 状态: %-12s | 互联网: %s",
+		DefaultAdapterPrompt: "默认通畅网卡为: [%d] %s (%s)。是否基于此网卡进行下一步探测？(y/n, 默认 yes): ",
+		SelectAdapterPrompt:  "请输入要使用的网卡序号 (1-%d): ",
+		InvalidAdapterIndex:  "无效的序号，请重新输入！",
 	},
 	EN: {
 		Title:          "==================== NetInspect Diagnostics ====================",
@@ -123,6 +133,11 @@ var translations = map[Lang]map[TransKey]string{
 		AdminRequired:  "This action requires Administrator privileges! Please re-run as Administrator.",
 		FixConfirmHint: "Please enter yes or no to confirm!",
 		FixSkipped:     "Skipped this fix.",
+		AdapterListHeader:   "Detected Network Adapters:",
+		AdapterListItem:     "[%d] Adapter: %-25s | IP: %-15s | GW: %-15s | Status: %-12s | Internet: %s",
+		DefaultAdapterPrompt: "Default adapter: [%d] %s (%s). Proceed with this adapter? (y/n, default yes): ",
+		SelectAdapterPrompt:  "Please enter the adapter number to use (1-%d): ",
+		InvalidAdapterIndex:  "Invalid number, please try again!",
 	},
 }
 
@@ -192,6 +207,8 @@ func main() {
 		diagnoseLink(report)
 	})
 
+	selectAdapterInteractive(report)
+
 	runDiagnosticStep(CategoryMTU, func() {
 		diagnoseMTU(report)
 	})
@@ -228,4 +245,145 @@ func runDiagnosticStep(catKey TransKey, fn func()) {
 	fn()
 	// Clear the scanning line and print the category header
 	fmt.Printf("\r\033[K%s\n", getT(catKey))
+}
+
+func selectAdapterInteractive(report *DiagnosticReport) {
+	if len(report.Adapters) == 0 {
+		return
+	}
+
+	fmt.Println()
+	printColored("info", getT(AdapterListHeader))
+	for i, ad := range report.Adapters {
+		internetStatus := "Failed"
+		if ad.InternetOK {
+			internetStatus = "OK"
+		}
+		statusStr := ad.Status
+		printColored("info", "  "+getT(AdapterListItem), i+1, ad.Name, ad.IPv4Address, ad.Gateway, statusStr, internetStatus)
+	}
+	fmt.Println()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	var selectedAd *Adapter
+
+	// Find default working adapter
+	defaultIdx := -1
+	// 1. First choice: adapter matching default route gateway and is OK
+	for i, ad := range report.Adapters {
+		if ad.Gateway == report.GatewayIP && ad.IsOK && report.GatewayIP != "" {
+			defaultIdx = i
+			break
+		}
+	}
+	// 2. Second choice: first physical adapter that is OK
+	if defaultIdx == -1 {
+		for i, ad := range report.Adapters {
+			if ad.IsOK && !strings.Contains(ad.InterfaceDescription, "Virtual") && !strings.Contains(ad.InterfaceDescription, "VMware") && !strings.Contains(ad.InterfaceDescription, "VirtualBox") {
+				defaultIdx = i
+				break
+			}
+		}
+	}
+	// 3. Third choice: first adapter that is OK
+	if defaultIdx == -1 {
+		for i, ad := range report.Adapters {
+			if ad.IsOK {
+				defaultIdx = i
+				break
+			}
+		}
+	}
+	// 4. Fourth choice: first adapter matching gateway
+	if defaultIdx == -1 && report.GatewayIP != "" {
+		for i, ad := range report.Adapters {
+			if ad.Gateway == report.GatewayIP {
+				defaultIdx = i
+				break
+			}
+		}
+	}
+
+	if defaultIdx >= 0 && defaultIdx < len(report.Adapters) {
+		defAd := report.Adapters[defaultIdx]
+		prompt := fmt.Sprintf(getT(DefaultAdapterPrompt), defaultIdx+1, defAd.Name, defAd.IPv4Address)
+		for {
+			fmt.Print(prompt)
+			if !scanner.Scan() {
+				break
+			}
+			input := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			if input == "" || input == "y" || input == "yes" || input == "是" {
+				selectedAd = &report.Adapters[defaultIdx]
+				break
+			}
+			if input == "n" || input == "no" || input == "否" {
+				break
+			}
+		}
+	}
+
+	if selectedAd == nil {
+		prompt := fmt.Sprintf(getT(SelectAdapterPrompt), len(report.Adapters))
+		for {
+			fmt.Print(prompt)
+			if !scanner.Scan() {
+				break
+			}
+			input := strings.TrimSpace(scanner.Text())
+			var idx int
+			_, err := fmt.Sscanf(input, "%d", &idx)
+			if err == nil && idx >= 1 && idx <= len(report.Adapters) {
+				selectedAd = &report.Adapters[idx-1]
+				break
+			}
+			printColored("danger", getT(InvalidAdapterIndex))
+		}
+	}
+
+	// Update report with the selected adapter
+	if selectedAd != nil {
+		report.AdapterName = selectedAd.Name
+		report.AdapterSpeed = selectedAd.LinkSpeed
+		report.AdapterLinkOK = (selectedAd.Status == "Up")
+		report.GatewayIP = selectedAd.Gateway
+		report.SelectedAdapterIP = selectedAd.IPv4Address
+		report.SelectedAdapterName = selectedAd.Name
+
+		// Run final 4-packet gateway ping for detailed stats
+		if report.GatewayIP != "" && report.SelectedAdapterIP != "" {
+			runFinalGatewayPing(report)
+		} else {
+			report.GatewayLatency = selectedAd.GatewayLatency
+			report.GatewayLoss = selectedAd.GatewayLoss
+		}
+
+		printColored("success", "\n[✔] 已选择网卡 / Selected Adapter: %s (%s)", selectedAd.Name, selectedAd.IPv4Address)
+	}
+
+	// Print physical link & gateway diagnostic summary
+	if report.GatewayLoss == 0 {
+		printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
+	} else if report.GatewayLoss < 100 {
+		printColored("warning", getT(ResultWarning), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
+	} else {
+		printColored("danger", getT(ResultDanger), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, "N/A", "100%"))
+	}
+
+	if report.AdapterName != "" {
+		isDegraded := false
+		if strings.Contains(report.AdapterSpeed, "Mbps") {
+			var speedVal int
+			_, _ = fmt.Sscanf(report.AdapterSpeed, "%d", &speedVal)
+			if speedVal <= 100 && (strings.Contains(strings.ToLower(report.AdapterName), "以太网") || strings.Contains(strings.ToLower(report.AdapterName), "ethernet")) {
+				isDegraded = true
+			}
+		}
+		if isDegraded {
+			printColored("warning", getT(ResultWarning), fmt.Sprintf(getT(LinkSpeed), report.AdapterName, report.AdapterSpeed, "Degraded (Negotiated at <=100Mbps Ethernet)"))
+		} else {
+			printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(LinkSpeed), report.AdapterName, report.AdapterSpeed, "OK"))
+		}
+	}
+	fmt.Println()
 }
