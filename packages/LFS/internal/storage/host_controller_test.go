@@ -28,6 +28,10 @@ func getFailureCommand(ctx context.Context) *exec.Cmd {
 }
 
 func TestLocalHostControllerSuccessPaths(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("skipping host controller success path tests on unsupported operating system")
+	}
+
 	var runs []commandRun
 
 	mockExecutor := func(ctx context.Context, name string, arg ...string) *exec.Cmd {
