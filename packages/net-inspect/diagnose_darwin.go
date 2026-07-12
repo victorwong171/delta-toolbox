@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -60,9 +61,18 @@ func getProcessMap() (map[int]string, error) {
 	return processMap, nil
 }
 
-func testPingDF(target string, size int) (bool, error) {
+func testPingDF(target string, size int, sourceIP string) (bool, error) {
 	// On macOS, -D disables fragmentation, -s specifies data payload size (excluding 8-byte ICMP header), -c 1 sends 1 packet.
-	cmd := exec.Command("ping", "-D", "-s", fmt.Sprintf("%d", size), "-c", "1", target)
+	args := []string{"-D", "-s", fmt.Sprintf("%d", size), "-c", "1"}
+	if sourceIP != "" {
+		isIPv6 := strings.Contains(sourceIP, ":")
+		if isIPv6 {
+			args = append([]string{"-6"}, args...)
+		}
+		args = append(args, "-S", sourceIP)
+	}
+	args = append(args, target)
+	cmd := exec.Command("ping", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -129,21 +139,7 @@ func getMacInterfaceDetails(iface string) (string, string, bool) {
 	return iface, speed, status
 }
 
-func diagnoseLink(report *DiagnosticReport) {
-	report.GatewayIP = getMacGateway()
-	if report.GatewayIP == "" {
-		report.GatewayIP = "192.168.1.1"
-	}
-
-	pingCmd := exec.Command("ping", "-c", "4", report.GatewayIP)
-	var pingOut bytes.Buffer
-	pingCmd.Stdout = &pingOut
-	_ = pingCmd.Run()
-	avgLat, loss := parsePingOutput(pingOut.String())
-	report.GatewayLatency = avgLat
-	report.GatewayLoss = loss
-
-	// Get primary interface details
+func getMacDefaultInterface() string {
 	cmd := exec.Command("route", "-n", "get", "default")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -154,31 +150,144 @@ func diagnoseLink(report *DiagnosticReport) {
 			if strings.HasPrefix(line, "interface:") {
 				fields := strings.Fields(line)
 				if len(fields) >= 2 {
-					name, speed, ok := getMacInterfaceDetails(fields[1])
-					report.AdapterName = name
-					report.AdapterSpeed = speed
-					report.AdapterLinkOK = ok
-					break
+					return fields[1]
 				}
 			}
 		}
 	}
+	return ""
+}
 
-	if report.GatewayLoss == 0 {
-		printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
-	} else if report.GatewayLoss < 100 {
-		printColored("warning", getT(ResultWarning), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, fmt.Sprintf("%dms", report.GatewayLatency/time.Millisecond), fmt.Sprintf("%.0f%%", report.GatewayLoss)))
-	} else {
-		printColored("danger", getT(ResultDanger), fmt.Sprintf(getT(GatewayPing), report.GatewayIP, "N/A", "100%"))
+func getNetAdapters() ([]Adapter, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
 	}
 
-	if report.AdapterName != "" {
-		statusStr := "Down"
-		if report.AdapterLinkOK {
-			statusStr = "OK"
+	defaultIface := getMacDefaultInterface()
+	defaultGw := getMacGateway()
+
+	var adapters []Adapter
+	for _, ifi := range ifaces {
+		status := "Down"
+		if ifi.Flags&net.FlagUp != 0 {
+			status = "Up"
 		}
-		printColored("success", getT(ResultSuccess), fmt.Sprintf(getT(LinkSpeed), report.AdapterName, report.AdapterSpeed, statusStr))
+
+		addrs, _ := ifi.Addrs()
+		var ip string
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipnet.IP.To4() != nil {
+					ip = ipnet.IP.String()
+					break
+				}
+			}
+		}
+
+		gw := ""
+		if ifi.Name == defaultIface && ip != "" {
+			gw = defaultGw
+		}
+
+		_, speed, _ := getMacInterfaceDetails(ifi.Name)
+
+		adapters = append(adapters, Adapter{
+			Index:                ifi.Index,
+			Name:                 ifi.Name,
+			InterfaceDescription: ifi.Name,
+			LinkSpeed:            speed,
+			Status:               status,
+			IPv4Address:          ip,
+			Gateway:              gw,
+		})
 	}
+	return adapters, nil
+}
+
+func probePing(sourceIP, target string) (time.Duration, float64) {
+	if sourceIP == "" || target == "" {
+		return 0, 100.0
+	}
+	isIPv6 := strings.Contains(sourceIP, ":")
+	var cmd *exec.Cmd
+	if isIPv6 {
+		cmd = exec.Command("ping", "-6", "-c", "2", "-W", "500", "-S", sourceIP, target)
+	} else {
+		cmd = exec.Command("ping", "-c", "2", "-W", "500", "-S", sourceIP, target)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	_ = cmd.Run()
+	return parsePingOutput(out.String())
+}
+
+func runFinalGatewayPing(report *DiagnosticReport) {
+	if report.GatewayIP == "" || report.SelectedAdapterIP == "" {
+		return
+	}
+	isIPv6 := strings.Contains(report.SelectedAdapterIP, ":")
+	var cmd *exec.Cmd
+	if isIPv6 {
+		cmd = exec.Command("ping", "-6", "-c", "4", "-S", report.SelectedAdapterIP, report.GatewayIP)
+	} else {
+		cmd = exec.Command("ping", "-c", "4", "-S", report.SelectedAdapterIP, report.GatewayIP)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	_ = cmd.Run()
+	report.GatewayLatency, report.GatewayLoss = parsePingOutput(out.String())
+}
+
+func diagnoseLink(report *DiagnosticReport) {
+	report.GatewayIP = getMacGateway()
+	if report.GatewayIP == "" {
+		report.GatewayIP = "192.168.1.1"
+	}
+
+	adapters, err := getNetAdapters()
+	if err != nil {
+		printColored("danger", "Failed to retrieve network adapters: "+err.Error())
+		return
+	}
+
+	var wg sync.WaitGroup
+	probedAdapters := make([]Adapter, len(adapters))
+	copy(probedAdapters, adapters)
+
+	for i := range probedAdapters {
+		ad := &probedAdapters[i]
+		if ad.Status != "Up" || ad.IPv4Address == "" {
+			continue
+		}
+
+		wg.Add(1)
+		go func(a *Adapter) {
+			defer wg.Done()
+			gwLatency := time.Duration(0)
+			gwLoss := 100.0
+			internetOK := false
+
+			// Probe gateway
+			if a.Gateway != "" {
+				gwLatency, gwLoss = probePing(a.IPv4Address, a.Gateway)
+			}
+
+			// Probe internet
+			_, pubLoss := probePing(a.IPv4Address, "223.5.5.5")
+			if pubLoss < 100.0 {
+				internetOK = true
+			}
+
+			a.GatewayLatency = gwLatency
+			a.GatewayLoss = gwLoss
+			a.InternetOK = internetOK
+			a.IsOK = (gwLoss < 100.0 || internetOK)
+		}(ad)
+	}
+	wg.Wait()
+
+	report.Adapters = probedAdapters
 }
 
 func diagnoseNAT(report *DiagnosticReport) {
@@ -260,7 +369,17 @@ func diagnoseNAT(report *DiagnosticReport) {
 	}
 
 	// Traceroute check
-	traceCmd := exec.Command("traceroute", "-q", "1", "-m", "3", "-n", "8.8.8.8")
+	var traceCmd *exec.Cmd
+	if report.SelectedAdapterIP != "" {
+		isIPv6 := strings.Contains(report.SelectedAdapterIP, ":")
+		if isIPv6 {
+			traceCmd = exec.Command("traceroute", "-6", "-q", "1", "-m", "3", "-n", "-s", report.SelectedAdapterIP, "2001:4860:4860::8888")
+		} else {
+			traceCmd = exec.Command("traceroute", "-q", "1", "-m", "3", "-n", "-s", report.SelectedAdapterIP, "8.8.8.8")
+		}
+	} else {
+		traceCmd = exec.Command("traceroute", "-q", "1", "-m", "3", "-n", "8.8.8.8")
+	}
 	var traceOut bytes.Buffer
 	traceCmd.Stdout = &traceOut
 	_ = traceCmd.Run()

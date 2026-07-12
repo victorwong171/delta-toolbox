@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -10,12 +12,15 @@ import (
 )
 
 type DiagnosticReport struct {
-	GatewayIP      string
-	GatewayLatency time.Duration
-	GatewayLoss    float64
-	AdapterName    string
-	AdapterSpeed   string
-	AdapterLinkOK  bool
+	GatewayIP           string
+	GatewayLatency      time.Duration
+	GatewayLoss         float64
+	AdapterName         string
+	AdapterSpeed        string
+	AdapterLinkOK       bool
+	Adapters            []Adapter
+	SelectedAdapterIP   string
+	SelectedAdapterName string
 
 	MaxPayload     int
 	OptimumMTU     int
@@ -47,10 +52,36 @@ type CloseWaitLeak struct {
 }
 
 type Adapter struct {
-	Name                 string
-	InterfaceDescription string
-	LinkSpeed            string
-	Status               string
+	Index                int    `json:"Index"`
+	Name                 string `json:"Name"`
+	InterfaceDescription string `json:"InterfaceDescription"`
+	LinkSpeed            string `json:"LinkSpeed"`
+	Status               string `json:"Status"`
+	IPv4Address          string `json:"IPv4Address"`
+	Gateway              string `json:"Gateway"`
+	GatewayLatency       time.Duration
+	GatewayLoss          float64
+	InternetOK           bool
+	IsOK                 bool
+}
+
+type AdapterList []Adapter
+
+func (al *AdapterList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	if trimmed[0] == '[' {
+		type Alias AdapterList
+		return json.Unmarshal(trimmed, (*Alias)(al))
+	}
+	var single Adapter
+	if err := json.Unmarshal(trimmed, &single); err != nil {
+		return err
+	}
+	*al = []Adapter{single}
+	return nil
 }
 
 func isVPNOrProxyAdapter(ad Adapter) bool {
@@ -193,12 +224,23 @@ func checkProxyAlive(server string) bool {
 	return false
 }
 
-func testDNSServer(dnsServer string, domain string) ([]string, time.Duration, error) {
+func testDNSServer(dnsServer string, domain string, localIP string) ([]string, time.Duration, error) {
 	r := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 1 * time.Second}
-			return d.DialContext(ctx, network, dnsServer)
+			dialer := &net.Dialer{Timeout: 1 * time.Second}
+			if localIP != "" {
+				if strings.HasPrefix(network, "tcp") {
+					if addr, err := net.ResolveTCPAddr("tcp", localIP+":0"); err == nil {
+						dialer.LocalAddr = addr
+					}
+				} else {
+					if addr, err := net.ResolveUDPAddr("udp", localIP+":0"); err == nil {
+						dialer.LocalAddr = addr
+					}
+				}
+			}
+			return dialer.DialContext(ctx, network, dnsServer)
 		},
 	}
 	start := time.Now()
@@ -210,14 +252,31 @@ func testDNSServer(dnsServer string, domain string) ([]string, time.Duration, er
 	return ips, duration, nil
 }
 
-func testLocalDNS(domain string) ([]string, time.Duration, error) {
-	start := time.Now()
-	ips, err := net.LookupHost(domain)
-	duration := time.Since(start)
-	if err != nil {
-		return nil, 0, err
+func testLocalDNS(domain string, localIP string) ([]string, time.Duration, error) {
+	if localIP == "" {
+		start := time.Now()
+		ips, err := net.LookupHost(domain)
+		return ips, time.Since(start), err
 	}
-	return ips, duration, nil
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialer := &net.Dialer{Timeout: 1 * time.Second}
+			if strings.HasPrefix(network, "tcp") {
+				if addr, err := net.ResolveTCPAddr("tcp", localIP+":0"); err == nil {
+					dialer.LocalAddr = addr
+				}
+			} else {
+				if addr, err := net.ResolveUDPAddr("udp", localIP+":0"); err == nil {
+					dialer.LocalAddr = addr
+				}
+			}
+			return dialer.DialContext(ctx, network, address)
+		},
+	}
+	start := time.Now()
+	ips, err := r.LookupHost(context.Background(), domain)
+	return ips, time.Since(start), err
 }
 
 func diagnoseMTU(report *DiagnosticReport) {
@@ -226,7 +285,7 @@ func diagnoseMTU(report *DiagnosticReport) {
 	successSize := 0
 
 	for _, size := range sizes {
-		ok, err := testPingDF(target, size)
+		ok, err := testPingDF(target, size, report.SelectedAdapterIP)
 		if err == nil && ok {
 			successSize = size
 			break
@@ -235,7 +294,7 @@ func diagnoseMTU(report *DiagnosticReport) {
 
 	if successSize == 0 {
 		for size := 1450; size >= 1000; size -= 10 {
-			ok, err := testPingDF(target, size)
+			ok, err := testPingDF(target, size, report.SelectedAdapterIP)
 			if err == nil && ok {
 				successSize = size
 				break
@@ -322,9 +381,9 @@ func diagnoseHosts(report *DiagnosticReport) {
 func diagnoseDNS(report *DiagnosticReport) {
 	domain := "baidu.com"
 
-	localIPs, localDur, localErr := testLocalDNS(domain)
-	_, aliDur, aliErr := testDNSServer("223.5.5.5:53", domain)
-	_, podDur, podErr := testDNSServer("119.29.29.29:53", domain)
+	localIPs, localDur, localErr := testLocalDNS(domain, report.SelectedAdapterIP)
+	_, aliDur, aliErr := testDNSServer("223.5.5.5:53", domain, report.SelectedAdapterIP)
+	_, podDur, podErr := testDNSServer("119.29.29.29:53", domain, report.SelectedAdapterIP)
 
 	localSpeedStr := "N/A"
 	if localErr == nil {
@@ -360,7 +419,11 @@ func diagnoseDNS(report *DiagnosticReport) {
 			report.DNSHijacked = true
 			printColored("danger", getT(ResultDanger), getT(ResultDanger)+" (DNS hijacking detected! Domain baidu.com resolved to loopback or private IP)")
 		} else {
-			printColored("success", getT(ResultSuccess), "Local DNS domain resolution is healthy (non-poisoned IP addresses returned).")
+			if localDur > 100*time.Millisecond {
+				printColored("warning", getT(ResultWarning), fmt.Sprintf("Local DNS resolution is slow / 本地 DNS 解析延迟过高 (%dms > 100ms)", localDur/time.Millisecond))
+			} else {
+				printColored("success", getT(ResultSuccess), "Local DNS domain resolution is healthy (non-poisoned IP addresses returned).")
+			}
 		}
 	}
 }

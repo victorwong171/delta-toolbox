@@ -20,8 +20,12 @@ func getProcessMap() (map[int]string, error) {
 	return nil, errors.New("not implemented on this platform")
 }
 
-func testPingDF(target string, size int) (bool, error) {
+func testPingDF(target string, size int, sourceIP string) (bool, error) {
 	return false, errors.New("not implemented on this platform")
+}
+
+func getNetAdapters() ([]Adapter, error) {
+	return nil, errors.New("not implemented on this platform")
 }
 
 func diagnoseLink(report *DiagnosticReport) {
