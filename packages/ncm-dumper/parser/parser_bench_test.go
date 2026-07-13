@@ -7,7 +7,7 @@ import (
 
 func BenchmarkDecryptReader(b *testing.B) {
 	data := make([]byte, 1024*1024) // 1MB of data
-	xorLookup := make([]byte, 256)
+	var xorLookup [256]byte
 	for i := range xorLookup {
 		xorLookup[i] = byte(i)
 	}
@@ -17,7 +17,7 @@ func BenchmarkDecryptReader(b *testing.B) {
 		r := bytes.NewReader(data)
 		dr := &DecryptReader{
 			r:         r,
-			xorLookup: xorLookup,
+			xorLookup: &xorLookup,
 		}
 		buf := make([]byte, 4096)
 		for {

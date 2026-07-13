@@ -45,9 +45,9 @@ func (p *parsedNCMImpl) DecryptedStream() io.Reader { return p.audioStream }
 
 // DecryptReader 实现了对底层 io.Reader 的流式包装，在 Read 读取时即时 (on-the-fly) 进行 XOR 异或解密
 type DecryptReader struct {
-	r            io.Reader // 底层被读取的音频加密数据流
-	xorLookup    []byte    // 预计算的 RC4 解密查找表 (256字节)
-	streamOffset int       // 全局流偏移量，保障分块并发读取时异或密钥索引能完美咬合
+	r            io.Reader  // 底层被读取的音频加密数据流
+	xorLookup    *[256]byte // 预计算的 RC4 解密查找表 (256字节)，使用指向固定大小数组的指针消除所有边界检查
+	streamOffset int        // 全局流偏移量，保障分块并发读取时异或密钥索引能完美咬合
 }
 
 // Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吐率
@@ -56,11 +56,11 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	if n > 0 {
 		// BCE optimization: assert slice bounds before entering the loop
 		_ = p[n-1]
-		_ = dr.xorLookup[255]
 		offset := byte(dr.streamOffset)
+		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
 		for i := 0; i < n; i++ {
 			offset++
-			p[i] ^= dr.xorLookup[offset]
+			p[i] ^= lookup[offset]
 		}
 		dr.streamOffset += n
 	}
@@ -134,7 +134,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 
 	// Build key box and lookup table
 	box := buildKeyBox(rc4Key)
-	xorLookup := make([]byte, 256)
+	var xorLookup [256]byte
 	for j := 0; j < 256; j++ {
 		bj := byte(j)
 		xorLookup[bj] = box[(box[bj]+box[(box[bj]+bj)&0xff])&0xff]
@@ -152,7 +152,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 		audioFormat: format,
 		audioStream: &DecryptReader{
 			r:         r,
-			xorLookup: xorLookup,
+			xorLookup: &xorLookup,
 		},
 	}, nil
 }
