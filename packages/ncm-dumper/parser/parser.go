@@ -38,9 +38,9 @@ type parsedNCMImpl struct {
 	audioStream io.Reader
 }
 
-func (p *parsedNCMImpl) Metadata() *Meta { return p.meta }
-func (p *parsedNCMImpl) Cover() []byte   { return p.cover }
-func (p *parsedNCMImpl) AudioFormat() string { return p.audioFormat }
+func (p *parsedNCMImpl) Metadata() *Meta            { return p.meta }
+func (p *parsedNCMImpl) Cover() []byte              { return p.cover }
+func (p *parsedNCMImpl) AudioFormat() string        { return p.audioFormat }
 func (p *parsedNCMImpl) DecryptedStream() io.Reader { return p.audioStream }
 
 // DecryptReader 实现了对底层 io.Reader 的流式包装，在 Read 读取时即时 (on-the-fly) 进行 XOR 异或解密
@@ -58,7 +58,26 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		_ = p[n-1]
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
-		for i := 0; i < n; i++ {
+
+		// Loop unrolling optimization (unrolled by 8):
+		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
+		// parallelism (ILP) by exposing independent operations to the CPU scheduler/pipeline.
+		// Since 'offset' is a byte, expressions like offset+1 etc. are checked and statically proven
+		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
+		i := 0
+		for ; i <= n-8; i += 8 {
+			p[i] ^= lookup[offset+1]
+			p[i+1] ^= lookup[offset+2]
+			p[i+2] ^= lookup[offset+3]
+			p[i+3] ^= lookup[offset+4]
+			p[i+4] ^= lookup[offset+5]
+			p[i+5] ^= lookup[offset+6]
+			p[i+6] ^= lookup[offset+7]
+			p[i+7] ^= lookup[offset+8]
+			offset += 8
+		}
+		// Clean up remaining bytes
+		for ; i < n; i++ {
 			offset++
 			p[i] ^= lookup[offset]
 		}
@@ -83,7 +102,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-	xorBytes(keyData, 0x64) // 与 0x64 进行异或还原
+	xorBytes(keyData, 0x64)                                 // 与 0x64 进行异或还原
 	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData) // 使用 AES-128-ECB 解密
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt key: %w", err)
