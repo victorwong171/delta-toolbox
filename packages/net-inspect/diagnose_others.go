@@ -28,6 +28,8 @@ func getNetAdapters() ([]Adapter, error) {
 	return nil, errors.New("not implemented on this platform")
 }
 
+func runFinalGatewayPing(report *DiagnosticReport) {}
+
 func diagnoseLink(report *DiagnosticReport) {
 	printColored("warning", "Physical link diagnostics are not implemented on this platform.")
 }
