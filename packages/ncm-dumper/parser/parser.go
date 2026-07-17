@@ -50,7 +50,7 @@ type DecryptReader struct {
 	streamOffset int        // 全局流偏移量，保障分块并发读取时异或密钥索引能完美咬合
 }
 
-// Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吐率
+// Read 执行流式解密，集成了编译器边界检查消除 (BCE) 与 8-way 循环展开以极大提升解密吞吐率与指令级并行度 (ILP)
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
 	if n > 0 {
@@ -58,7 +58,23 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		_ = p[n-1]
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
-		for i := 0; i < n; i++ {
+
+		i := 0
+		// Loop unrolling by 8 to reduce loop overhead and enable instruction-level parallelism (ILP).
+		// By indexing the *[256]byte lookup table with cast byte indices, compile-time BCE is fully preserved.
+		for ; i <= n-8; i += 8 {
+			p[i] ^= lookup[byte(offset+1)]
+			p[i+1] ^= lookup[byte(offset+2)]
+			p[i+2] ^= lookup[byte(offset+3)]
+			p[i+3] ^= lookup[byte(offset+4)]
+			p[i+4] ^= lookup[byte(offset+5)]
+			p[i+5] ^= lookup[byte(offset+6)]
+			p[i+6] ^= lookup[byte(offset+7)]
+			p[i+7] ^= lookup[byte(offset+8)]
+			offset += 8
+		}
+		// Remaining elements cleanup loop
+		for ; i < n; i++ {
 			offset++
 			p[i] ^= lookup[offset]
 		}

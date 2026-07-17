@@ -24,6 +24,8 @@ func testPingDF(target string, size int, sourceIP string) (bool, error) {
 	return false, errors.New("not implemented on this platform")
 }
 
+func runFinalGatewayPing(report *DiagnosticReport) {}
+
 func getNetAdapters() ([]Adapter, error) {
 	return nil, errors.New("not implemented on this platform")
 }
