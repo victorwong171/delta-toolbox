@@ -43,3 +43,5 @@ func diagnoseProxy(report *DiagnosticReport) {
 func isAdminOrRoot() bool {
 	return false
 }
+
+func runFinalGatewayPing(report *DiagnosticReport) {}

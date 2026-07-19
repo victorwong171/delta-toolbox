@@ -58,7 +58,29 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		_ = p[n-1]
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
-		for i := 0; i < n; i++ {
+
+		// Loop unrolling by 8 to reduce loop control overhead and enhance instruction-level parallelism (ILP)
+		i := 0
+		for ; i <= n-8; i += 8 {
+			offset++
+			p[i] ^= lookup[offset]
+			offset++
+			p[i+1] ^= lookup[offset]
+			offset++
+			p[i+2] ^= lookup[offset]
+			offset++
+			p[i+3] ^= lookup[offset]
+			offset++
+			p[i+4] ^= lookup[offset]
+			offset++
+			p[i+5] ^= lookup[offset]
+			offset++
+			p[i+6] ^= lookup[offset]
+			offset++
+			p[i+7] ^= lookup[offset]
+		}
+		// Handle remaining elements
+		for ; i < n; i++ {
 			offset++
 			p[i] ^= lookup[offset]
 		}
