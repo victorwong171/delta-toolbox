@@ -38,9 +38,9 @@ type parsedNCMImpl struct {
 	audioStream io.Reader
 }
 
-func (p *parsedNCMImpl) Metadata() *Meta { return p.meta }
-func (p *parsedNCMImpl) Cover() []byte   { return p.cover }
-func (p *parsedNCMImpl) AudioFormat() string { return p.audioFormat }
+func (p *parsedNCMImpl) Metadata() *Meta            { return p.meta }
+func (p *parsedNCMImpl) Cover() []byte              { return p.cover }
+func (p *parsedNCMImpl) AudioFormat() string        { return p.audioFormat }
 func (p *parsedNCMImpl) DecryptedStream() io.Reader { return p.audioStream }
 
 // DecryptReader 实现了对底层 io.Reader 的流式包装，在 Read 读取时即时 (on-the-fly) 进行 XOR 异或解密
@@ -54,14 +54,48 @@ type DecryptReader struct {
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
 	if n > 0 {
-		// BCE optimization: assert slice bounds before entering the loop
-		_ = p[n-1]
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
-		for i := 0; i < n; i++ {
+
+		// Unroll the loop by 8 to reduce branch/loop overhead and enable instruction-level parallelism (ILP)
+		i := 0
+		for ; i <= n-8; i += 8 {
+			_ = p[i+7] // BCE assertion to completely eliminate bounds checking within this unrolled block
+
 			offset++
 			p[i] ^= lookup[offset]
+
+			offset++
+			p[i+1] ^= lookup[offset]
+
+			offset++
+			p[i+2] ^= lookup[offset]
+
+			offset++
+			p[i+3] ^= lookup[offset]
+
+			offset++
+			p[i+4] ^= lookup[offset]
+
+			offset++
+			p[i+5] ^= lookup[offset]
+
+			offset++
+			p[i+6] ^= lookup[offset]
+
+			offset++
+			p[i+7] ^= lookup[offset]
 		}
+
+		// Handle any remaining elements
+		if i < n {
+			_ = p[n-1] // BCE assertion for the remainder
+			for ; i < n; i++ {
+				offset++
+				p[i] ^= lookup[offset]
+			}
+		}
+
 		dr.streamOffset += n
 	}
 	return
@@ -83,7 +117,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-	xorBytes(keyData, 0x64) // 与 0x64 进行异或还原
+	xorBytes(keyData, 0x64)                                 // 与 0x64 进行异或还原
 	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData) // 使用 AES-128-ECB 解密
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt key: %w", err)
