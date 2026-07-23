@@ -40,6 +40,10 @@ func diagnoseProxy(report *DiagnosticReport) {
 	printColored("warning", "Proxy diagnostics are not implemented on this platform.")
 }
 
+func runFinalGatewayPing(report *DiagnosticReport) {
+	// Stub implementation for other platforms
+}
+
 func isAdminOrRoot() bool {
 	return false
 }
