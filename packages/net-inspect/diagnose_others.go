@@ -43,3 +43,7 @@ func diagnoseProxy(report *DiagnosticReport) {
 func isAdminOrRoot() bool {
 	return false
 }
+
+func runFinalGatewayPing(report *DiagnosticReport) {
+	// Not implemented on this platform
+}
