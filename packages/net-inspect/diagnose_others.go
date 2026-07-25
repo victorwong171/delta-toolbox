@@ -43,3 +43,7 @@ func diagnoseProxy(report *DiagnosticReport) {
 func isAdminOrRoot() bool {
 	return false
 }
+
+func runFinalGatewayPing(report *DiagnosticReport) {
+	// Stub implementation for non-Windows/non-Darwin platforms
+}
