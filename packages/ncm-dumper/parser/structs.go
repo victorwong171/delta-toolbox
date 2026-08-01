@@ -65,8 +65,8 @@ func (a *Artist) UnmarshalJSON(data []byte) error {
 
 // Meta 代表音频轨道的全局元数据信息（包括歌曲ID、歌曲名、专辑、歌手、码率、时长与格式）
 type Meta struct {
-	Id       any      `json:"musicId"`
-	Name     string   `json:"musicName"`
+	Id       any    `json:"musicId"`
+	Name     string `json:"musicName"`
 	*Album   `json:",inline"`
 	Artists  []Artist `json:"artist"`
 	BitRate  any      `json:"bitrate"`
@@ -114,4 +114,3 @@ func (m *Meta) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
-
