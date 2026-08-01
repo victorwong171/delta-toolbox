@@ -60,36 +60,24 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
 
+		// Loop unrolling optimization (unrolled by 8):
+		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
+		// parallelism (ILP) by exposing independent operations to the CPU scheduler/pipeline.
+		// Since 'offset' is a byte, expressions like offset+1 etc. are checked and statically proven
+		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
 		i := 0
-		// Loop unrolled by 8 to reduce branch penalty and allow ILP (Instruction-Level Parallelism)
 		for ; i <= n-8; i += 8 {
-			_ = p[i+7] // Assert bounds for this chunk to help BCE
-
-			offset++
-			p[i] ^= lookup[offset]
-
-			offset++
-			p[i+1] ^= lookup[offset]
-
-			offset++
-			p[i+2] ^= lookup[offset]
-
-			offset++
-			p[i+3] ^= lookup[offset]
-
-			offset++
-			p[i+4] ^= lookup[offset]
-
-			offset++
-			p[i+5] ^= lookup[offset]
-
-			offset++
-			p[i+6] ^= lookup[offset]
-
-			offset++
-			p[i+7] ^= lookup[offset]
+			p[i] ^= lookup[offset+1]
+			p[i+1] ^= lookup[offset+2]
+			p[i+2] ^= lookup[offset+3]
+			p[i+3] ^= lookup[offset+4]
+			p[i+4] ^= lookup[offset+5]
+			p[i+5] ^= lookup[offset+6]
+			p[i+6] ^= lookup[offset+7]
+			p[i+7] ^= lookup[offset+8]
+			offset += 8
 		}
-		// Handle remaining bytes
+		// Clean up remaining bytes
 		for ; i < n; i++ {
 			offset++
 			p[i] ^= lookup[offset]
