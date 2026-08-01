@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"lfs/internal/interfaces"
+	"lfs/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,18 +37,8 @@ func (a *StorageAdapter) SaveFile(ctx context.Context, file *multipart.FileHeade
 }
 
 // SaveFileChunk saves a file chunk.
-func (a *StorageAdapter) SaveFileChunk(ctx context.Context, chunkInfo interfaces.FileChunkInfo, file *multipart.FileHeader) error {
-	// Convert to internal type
-	internalChunkInfo := FileChunkInfo{
-		FileName:   chunkInfo.FileName,
-		TotalSize:  chunkInfo.TotalSize,
-		ChunkIndex: chunkInfo.ChunkIndex,
-		ChunkSize:  chunkInfo.ChunkSize,
-		TotalChunk: chunkInfo.TotalChunk,
-		MD5:        chunkInfo.MD5,
-		ModTime:    chunkInfo.ModTime,
-	}
-	return SaveFileChunk(a.storagePath, internalChunkInfo, file, a.md5Cache, a.enableMD5)
+func (a *StorageAdapter) SaveFileChunk(ctx context.Context, chunkInfo models.FileChunkInfo, file *multipart.FileHeader) error {
+	return SaveFileChunk(a.storagePath, chunkInfo, file, a.md5Cache, a.enableMD5)
 }
 
 // DownloadFile downloads a file with resumable transfer support.
@@ -61,45 +52,8 @@ func (a *StorageAdapter) DownloadFileChunk(ctx context.Context, c *gin.Context, 
 }
 
 // ListFiles lists all files and directories with recursive traversal support.
-func (a *StorageAdapter) ListFiles(ctx context.Context) ([]interfaces.FileMetadata, error) {
-	files, err := ListFiles(a.storagePath, a.md5Cache, a.enableMD5)
-	if err != nil {
-		return nil, err
-	}
-	// Convert to interface type
-	result := make([]interfaces.FileMetadata, len(files))
-	for i, f := range files {
-		result[i] = interfaces.FileMetadata{
-			Name:     f.Name,
-			Path:     f.Path,
-			Size:     f.Size,
-			ModTime:  f.ModTime,
-			MD5:      f.MD5,
-			IsDir:    f.IsDir,
-			Children: convertChildren(f.Children),
-		}
-	}
-	return result, nil
-}
-
-// convertChildren converts internal file metadata list to interface type.
-func convertChildren(children []FileMetadata) []interfaces.FileMetadata {
-	if len(children) == 0 {
-		return nil
-	}
-	result := make([]interfaces.FileMetadata, len(children))
-	for i, c := range children {
-		result[i] = interfaces.FileMetadata{
-			Name:     c.Name,
-			Path:     c.Path,
-			Size:     c.Size,
-			ModTime:  c.ModTime,
-			MD5:      c.MD5,
-			IsDir:    c.IsDir,
-			Children: convertChildren(c.Children),
-		}
-	}
-	return result
+func (a *StorageAdapter) ListFiles(ctx context.Context) ([]models.FileMetadata, error) {
+	return ListFiles(a.storagePath, a.md5Cache, a.enableMD5)
 }
 
 // CheckFileExists checks if a file exists.

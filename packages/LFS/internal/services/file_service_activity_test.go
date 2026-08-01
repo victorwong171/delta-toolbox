@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"lfs/internal/interfaces"
+	"lfs/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,7 +20,7 @@ func (m *mockStorage) SaveFile(ctx context.Context, file *multipart.FileHeader, 
 	return nil
 }
 
-func (m *mockStorage) SaveFileChunk(ctx context.Context, chunkInfo interfaces.FileChunkInfo, file *multipart.FileHeader) error {
+func (m *mockStorage) SaveFileChunk(ctx context.Context, chunkInfo models.FileChunkInfo, file *multipart.FileHeader) error {
 	return nil
 }
 
@@ -67,7 +68,7 @@ func TestFileServiceActivityNotification(t *testing.T) {
 	_ = service.UploadFile(ctx, nil, "")
 
 	// 2. 测试 UploadFileChunk
-	_ = service.UploadFileChunk(ctx, interfaces.FileChunkInfo{}, nil)
+	_ = service.UploadFileChunk(ctx, models.FileChunkInfo{}, nil)
 
 	// 3. 测试 BatchUpload (单个文件)
 	files := []*multipart.FileHeader{{}}
