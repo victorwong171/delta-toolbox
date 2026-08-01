@@ -51,6 +51,7 @@ type DecryptReader struct {
 }
 
 // Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吐率
+// 此外，将解密循环展开为 8，减少了循环控制开销并启用指令级并行 (ILP)
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
 	if n > 0 {
