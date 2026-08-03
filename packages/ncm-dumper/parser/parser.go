@@ -55,10 +55,12 @@ type DecryptReader struct {
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
 	if n > 0 {
+		p = p[:n]
 		// BCE optimization: assert slice bounds before entering the loop
 		_ = p[n-1]
 		offset := byte(dr.streamOffset)
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
+		_ = lookup
 
 		// Loop unrolling optimization (unrolled by 8):
 		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
@@ -67,20 +69,22 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
 		i := 0
 		for ; i <= n-8; i += 8 {
-			p[i] ^= lookup[offset+1]
-			p[i+1] ^= lookup[offset+2]
-			p[i+2] ^= lookup[offset+3]
-			p[i+3] ^= lookup[offset+4]
-			p[i+4] ^= lookup[offset+5]
-			p[i+5] ^= lookup[offset+6]
-			p[i+6] ^= lookup[offset+7]
-			p[i+7] ^= lookup[offset+8]
+			sub := p[i : i+8]
+			_ = sub[7]
+			sub[0] ^= lookup[byte(offset+1)]
+			sub[1] ^= lookup[byte(offset+2)]
+			sub[2] ^= lookup[byte(offset+3)]
+			sub[3] ^= lookup[byte(offset+4)]
+			sub[4] ^= lookup[byte(offset+5)]
+			sub[5] ^= lookup[byte(offset+6)]
+			sub[6] ^= lookup[byte(offset+7)]
+			sub[7] ^= lookup[byte(offset+8)]
 			offset += 8
 		}
 		// Clean up remaining bytes
-		for ; i < n; i++ {
+		for ; i < len(p); i++ {
 			offset++
-			p[i] ^= lookup[offset]
+			p[i] ^= lookup[byte(offset)]
 		}
 		dr.streamOffset += n
 	}
