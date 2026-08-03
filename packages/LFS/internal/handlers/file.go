@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lfs/internal/interfaces"
+	"lfs/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -125,7 +126,7 @@ func (h *FileHandlers) UploadChunk(c *gin.Context) {
 		return
 	}
 
-	chunkInfo := interfaces.FileChunkInfo{
+	chunkInfo := models.FileChunkInfo{
 		FileName:   fileName,
 		TotalSize:  totalSize,
 		ChunkIndex: chunkIndex,

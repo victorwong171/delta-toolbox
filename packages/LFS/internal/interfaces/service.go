@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 
 	"github.com/gin-gonic/gin"
+	"lfs/internal/models"
 )
 
 // FileService 定义文件服务的业务逻辑接口。
@@ -16,7 +17,7 @@ type FileService interface {
 
 	// UploadFileChunk 上传文件分片。
 	// chunkInfo 包含分片的元数据信息。
-	UploadFileChunk(ctx context.Context, chunkInfo FileChunkInfo, file *multipart.FileHeader) error
+	UploadFileChunk(ctx context.Context, chunkInfo models.FileChunkInfo, file *multipart.FileHeader) error
 
 	// BatchUpload 批量上传多个文件。
 	// 返回成功数量、失败数量和错误信息列表。
@@ -32,7 +33,7 @@ type FileService interface {
 
 	// ListFiles 列出指定路径下的所有文件。
 	// path 为空字符串时列出根目录。
-	ListFiles(ctx context.Context, path string) ([]FileMetadata, error)
+	ListFiles(ctx context.Context, path string) ([]models.FileMetadata, error)
 
 	// GetFileMD5 获取文件的MD5校验值。
 	// 如果文件正在计算中，会等待计算完成。

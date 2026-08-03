@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"lfs/internal/interfaces"
+	"lfs/internal/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -56,7 +57,7 @@ func (s *FileService) UploadFile(ctx context.Context, file *multipart.FileHeader
 }
 
 // UploadFileChunk uploads a file chunk.
-func (s *FileService) UploadFileChunk(ctx context.Context, chunkInfo interfaces.FileChunkInfo, file *multipart.FileHeader) error {
+func (s *FileService) UploadFileChunk(ctx context.Context, chunkInfo models.FileChunkInfo, file *multipart.FileHeader) error {
 	s.notifyStart()
 	defer s.notifyEnd()
 	return s.storage.SaveFileChunk(ctx, chunkInfo, file)
@@ -139,7 +140,7 @@ func (s *FileService) DownloadFileChunk(ctx context.Context, c *gin.Context, fil
 }
 
 // ListFiles lists files.
-func (s *FileService) ListFiles(ctx context.Context, path string) ([]interfaces.FileMetadata, error) {
+func (s *FileService) ListFiles(ctx context.Context, path string) ([]models.FileMetadata, error) {
 	// Security check: prevent path traversal attacks
 	if path != "" && strings.Contains(path, "..") {
 		return nil, errors.New("invalid path")

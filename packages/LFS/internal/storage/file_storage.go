@@ -19,6 +19,7 @@ import (
 	"lfs/internal/interfaces"
 
 	"github.com/gin-gonic/gin"
+	"lfs/internal/models"
 )
 
 // 常量定义
@@ -42,28 +43,6 @@ const (
 	ErrMD5Timeout    = "MD5 calculation timeout"
 	ErrMD5InProgress = "MD5 calculation in progress"
 )
-
-// FileMetadata 文件元数据结构
-type FileMetadata struct {
-	Name     string         `json:"name"`
-	Path     string         `json:"path"` // 相对路径
-	Size     int64          `json:"size"`
-	ModTime  time.Time      `json:"mod_time"`
-	MD5      string         `json:"md5,omitempty"`
-	IsDir    bool           `json:"is_dir"`             // 是否为文件夹
-	Children []FileMetadata `json:"children,omitempty"` // 子文件/文件夹（仅当IsDir为true时）
-}
-
-// FileChunkInfo 文件分片信息
-type FileChunkInfo struct {
-	FileName   string `json:"file_name"`
-	TotalSize  int64  `json:"total_size"`
-	ChunkIndex int    `json:"chunk_index"`
-	ChunkSize  int64  `json:"chunk_size"`
-	TotalChunk int    `json:"total_chunk"`
-	MD5        string `json:"md5"`
-	ModTime    int64  `json:"mod_time"`
-}
 
 // MD5CacheEntry MD5缓存条目
 type MD5CacheEntry struct {
@@ -312,7 +291,7 @@ func SaveFileWithTimeout(ctx context.Context, storagePath string, file *multipar
 }
 
 // SaveFileChunk 保存文件分片
-func SaveFileChunk(storagePath string, chunkInfo FileChunkInfo, file *multipart.FileHeader, md5Cache interfaces.MD5Cache, enableMD5 bool) error {
+func SaveFileChunk(storagePath string, chunkInfo models.FileChunkInfo, file *multipart.FileHeader, md5Cache interfaces.MD5Cache, enableMD5 bool) error {
 	chunkDir := filepath.Join(storagePath, "chunks", chunkInfo.FileName)
 	err := os.MkdirAll(chunkDir, os.ModePerm)
 	if err != nil {
@@ -638,13 +617,13 @@ func parseRangeHeader(rangeHeader string) (int, int, error) {
 }
 
 // ListFiles 列出存储路径下的所有文件和文件夹（支持递归）
-func ListFiles(storagePath string, md5Cache interfaces.MD5Cache, enableMD5 bool) ([]FileMetadata, error) {
+func ListFiles(storagePath string, md5Cache interfaces.MD5Cache, enableMD5 bool) ([]models.FileMetadata, error) {
 	return listFilesRecursive(storagePath, storagePath, "", md5Cache, enableMD5)
 }
 
 // listFilesRecursive 递归列出文件和文件夹
-func listFilesRecursive(basePath, currentPath, relativePath string, md5Cache interfaces.MD5Cache, enableMD5 bool) ([]FileMetadata, error) {
-	var files []FileMetadata
+func listFilesRecursive(basePath, currentPath, relativePath string, md5Cache interfaces.MD5Cache, enableMD5 bool) ([]models.FileMetadata, error) {
+	var files []models.FileMetadata
 
 	err := os.MkdirAll(currentPath, os.ModePerm)
 	if err != nil {
@@ -673,10 +652,10 @@ func listFilesRecursive(basePath, currentPath, relativePath string, md5Cache int
 			children, err := listFilesRecursive(basePath, filePath, fileRelativePath, md5Cache, enableMD5)
 			if err != nil {
 				// 如果无法读取子文件夹，仍然添加文件夹但无子项
-				children = []FileMetadata{}
+				children = []models.FileMetadata{}
 			}
 
-			file := FileMetadata{
+			file := models.FileMetadata{
 				Name:     info.Name(),
 				Path:     fileRelativePath,
 				Size:     0,
@@ -729,7 +708,7 @@ func listFilesRecursive(basePath, currentPath, relativePath string, md5Cache int
 				}
 			}
 
-			file := FileMetadata{
+			file := models.FileMetadata{
 				Name:    info.Name(),
 				Path:    fileRelativePath,
 				Size:    info.Size(),

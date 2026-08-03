@@ -4,32 +4,10 @@ import (
 	"context"
 	"io"
 	"mime/multipart"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"lfs/internal/models"
 )
-
-// FileChunkInfo 表示文件分片的元数据信息。
-type FileChunkInfo struct {
-	FileName   string `json:"file_name"`   // 文件名
-	TotalSize  int64  `json:"total_size"`  // 文件总大小（字节）
-	ChunkIndex int    `json:"chunk_index"` // 分片索引（从0开始）
-	ChunkSize  int64  `json:"chunk_size"`  // 分片大小（字节）
-	TotalChunk int    `json:"total_chunk"` // 总分片数
-	MD5        string `json:"md5"`         // 分片的MD5值
-	ModTime    int64  `json:"mod_time"`    // 原始文件修改时间（Unix时间戳，秒）
-}
-
-// FileMetadata 表示文件或目录的元数据信息。
-type FileMetadata struct {
-	Name     string         `json:"name"`              // 文件或目录名
-	Path     string         `json:"path"`              // 完整路径
-	Size     int64          `json:"size"`               // 文件大小（字节），目录为0
-	ModTime  time.Time      `json:"mod_time"`          // 修改时间
-	MD5      string         `json:"md5,omitempty"`     // MD5值（仅文件）
-	IsDir    bool           `json:"is_dir"`             // 是否为目录
-	Children []FileMetadata `json:"children,omitempty"` // 子项列表（仅目录）
-}
 
 // Storage 定义文件存储的核心操作接口。
 // 支持多种存储实现（本地文件系统、云存储等），提供统一的存储抽象。
@@ -40,7 +18,7 @@ type Storage interface {
 
 	// SaveFileChunk 保存文件分片。
 	// chunkInfo 包含分片的元数据信息。
-	SaveFileChunk(ctx context.Context, chunkInfo FileChunkInfo, file *multipart.FileHeader) error
+	SaveFileChunk(ctx context.Context, chunkInfo models.FileChunkInfo, file *multipart.FileHeader) error
 
 	// DownloadFile 下载文件，支持断点续传。
 	// rangeHeader 用于指定下载范围，空字符串表示完整下载。
@@ -51,7 +29,7 @@ type Storage interface {
 	DownloadFileChunk(ctx context.Context, c *gin.Context, filename string, chunkIndex, chunkSize int64) error
 
 	// ListFiles 列出所有文件和文件夹，支持递归遍历。
-	ListFiles(ctx context.Context) ([]FileMetadata, error)
+	ListFiles(ctx context.Context) ([]models.FileMetadata, error)
 
 	// CheckFileExists 检查文件是否存在。
 	// 文件不存在时返回错误。
