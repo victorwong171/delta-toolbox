@@ -10,6 +10,13 @@ import (
 	"lfs/internal/interfaces"
 )
 
+// pooledReader groups *gzip.Reader and *bytes.Reader to avoid heap allocations
+// of bytes.Reader during decompression.
+type pooledReader struct {
+	gr *gzip.Reader
+	br *bytes.Reader
+}
+
 // GzipCompressor implements interfaces.Compressor using gzip compression.
 // It uses sync.Pool to reuse gzip.Writer, gzip.Reader, and bytes.Buffer,
 // drastically reducing memory allocation and garbage collection overhead.
@@ -30,8 +37,12 @@ func NewGzipCompressor() interfaces.Compressor {
 		},
 		readerPool: sync.Pool{
 			New: func() interface{} {
-				// gzip.Reader can be safely instantiated as a zero-value struct and reset later
-				return &gzip.Reader{}
+				// We pool a bundled *gzip.Reader and *bytes.Reader to avoid
+				// allocating a new bytes.Reader on every Decompress call.
+				return &pooledReader{
+					gr: &gzip.Reader{},
+					br: &bytes.Reader{},
+				}
 			},
 		},
 		bufferPool: sync.Pool{
@@ -76,18 +87,20 @@ func (g *GzipCompressor) CompressStream(w io.Writer) (io.WriteCloser, error) {
 
 // Decompress decompresses byte data using pooled resources.
 func (g *GzipCompressor) Decompress(data []byte) ([]byte, error) {
-	r := g.readerPool.Get().(*gzip.Reader)
+	pr := g.readerPool.Get().(*pooledReader)
 	defer func() {
-		_ = r.Reset(bytes.NewReader(nil)) // Reset to release the reference to the underlying bytes
-		g.readerPool.Put(r)
+		pr.br.Reset(nil)
+		_ = pr.gr.Reset(pr.br) // Reset to release the reference to the underlying bytes
+		g.readerPool.Put(pr)
 	}()
 
-	err := r.Reset(bytes.NewReader(data))
+	pr.br.Reset(data)
+	err := pr.gr.Reset(pr.br)
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
-	return io.ReadAll(r)
+	defer pr.gr.Close()
+	return io.ReadAll(pr.gr)
 }
 
 // DecompressStream creates a streaming decompression reader.

@@ -81,10 +81,13 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 			sub[7] ^= lookup[byte(offset+8)]
 			offset += 8
 		}
-		// Clean up remaining bytes
-		for ; i < len(p); i++ {
-			offset++
-			p[i] ^= lookup[byte(offset)]
+		// Clean up remaining bytes using range over a sub-slice to achieve 100% bounds-check free loop
+		if i < n {
+			rem := p[i:]
+			for j := range rem {
+				offset++
+				rem[j] ^= lookup[byte(offset)]
+			}
 		}
 		dr.streamOffset += n
 	}
