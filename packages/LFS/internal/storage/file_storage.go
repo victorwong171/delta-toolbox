@@ -730,6 +730,15 @@ func CheckFileExists(storagePath string, filename string) error {
 	return err
 }
 
+// md5BufferPool is a sync.Pool for large buffers used during MD5 calculation
+// to avoid frequent heap allocations and GC overhead.
+var md5BufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 4*1024*1024)
+		return &buf
+	},
+}
+
 // calculateFileMD5 计算文件的真实MD5值（基于文件内容）
 func calculateFileMD5(filePath string) (string, error) {
 	file, err := os.Open(filePath)
@@ -739,7 +748,10 @@ func calculateFileMD5(filePath string) (string, error) {
 	defer file.Close()
 
 	hash := md5.New()
-	buf := make([]byte, 4*1024*1024) // 4MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := file.Read(buf)
 		if n > 0 {
@@ -770,7 +782,10 @@ func calculateFileMD5WithProgress(filePath string, progressCallback func(float64
 	totalSize := info.Size()
 
 	hash := md5.New()
-	buf := make([]byte, ChunkBufferSize) // 2MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:ChunkBufferSize]
+
 	var readBytes int64
 
 	for {
