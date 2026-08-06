@@ -75,6 +75,16 @@ var md5Cache = &MD5Cache{
 // 全局计算信号量
 var md5CalculationSemaphore = make(chan struct{}, MD5MaxConcurrent)
 
+// md5BufferPool controls buffers for MD5 calculation, using sync.Pool to reuse large slices
+// and storing pointers to slices (*[]byte) to completely eliminate dynamic heap allocations.
+var md5BufferPool = sync.Pool{
+	New: func() interface{} {
+		// 4MB buffer is the maximum buffer size we use for hashing.
+		b := make([]byte, 4*1024*1024)
+		return &b
+	},
+}
+
 // getCacheKey 生成缓存键：fileName:size:modTime
 func getCacheKey(fileName string, size int64, modTime int64) string {
 	return fmt.Sprintf("%s:%d:%d", fileName, size, modTime)
@@ -739,7 +749,10 @@ func calculateFileMD5(filePath string) (string, error) {
 	defer file.Close()
 
 	hash := md5.New()
-	buf := make([]byte, 4*1024*1024) // 4MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := file.Read(buf)
 		if n > 0 {
@@ -770,7 +783,10 @@ func calculateFileMD5WithProgress(filePath string, progressCallback func(float64
 	totalSize := info.Size()
 
 	hash := md5.New()
-	buf := make([]byte, ChunkBufferSize) // 2MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	// Down-slice to 2MB (ChunkBufferSize) to save memory/read-chunks while avoiding heap allocation
+	buf := (*bufPtr)[:ChunkBufferSize]
 	var readBytes int64
 
 	for {
