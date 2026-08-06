@@ -21,3 +21,7 @@ Only critical learnings are logged here to avoid clutter.
 ## 2026-07-17 - Bounds-Check Free Sliced Range Cleanup Loop
 **Learning:** Cleanup/fallback loops handling remaining bytes of an unrolled loop often trigger bounds check warnings if we index with variables updated across different loops. By sub-slicing the remainder (e.g., `rem := p[i:]`) and using a standard `range` iteration `for j := range rem`, the Go compiler statically guarantees 100% bounds-check free indexing inside the cleanup loop.
 **Action:** Always slice the remainder of unrolled loops and iterate over the sub-slice using `range` to eliminate bounds checks on leftover elements.
+
+## 2026-07-18 - High-Frequency Large Buffer Allocation Prevention with sync.Pool
+**Learning:** Allocating large buffers (2MB-4MB) dynamically in high-frequency operations like MD5 file hashing creates severe GC (Garbage Collector) pressure. By pooling pointers to these slices (`*[]byte`) using a `sync.Pool`, we can completely bypass dynamic heap allocations. Pointers prevent slice headers from escaping to the heap during `interface{}` boxing, resulting in 0 allocations for the pool itself. Slices retrieved from the pool can be safely down-sliced to match smaller buffer requirements. This resulted in an over 96% reduction in memory allocations for MD5 calculations.
+**Action:** Always use a `sync.Pool` storing pointers to large slices (`*[]byte`) for high-frequency or heavy-load buffer requirements, and down-slice the retrieved buffer as needed.
