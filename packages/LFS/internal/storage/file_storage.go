@@ -75,6 +75,16 @@ var md5Cache = &MD5Cache{
 // 全局计算信号量
 var md5CalculationSemaphore = make(chan struct{}, MD5MaxConcurrent)
 
+// md5BufferPool is a sync.Pool that manages pointers to large byte slices (*[]byte).
+// We store pointers to avoid slice header allocation overhead when retrieving/putting,
+// and allocate the full DefaultBufferSize (4MB) so that smaller buffers can be safely down-sliced.
+var md5BufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, DefaultBufferSize)
+		return &buf
+	},
+}
+
 // getCacheKey 生成缓存键：fileName:size:modTime
 func getCacheKey(fileName string, size int64, modTime int64) string {
 	return fmt.Sprintf("%s:%d:%d", fileName, size, modTime)
@@ -266,7 +276,9 @@ func SaveFile(storagePath string, file *multipart.FileHeader, rangeHeader string
 
 	// 将上传的文件内容复制到目标文件，使用更大的缓冲区提高性能
 	// 使用4MB缓冲区进行复制，提高大文件传输性能
-	buf := make([]byte, 4*1024*1024)
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := *bufPtr
 	_, err = io.CopyBuffer(out, src, buf)
 	return err
 }
@@ -315,7 +327,9 @@ func SaveFileChunk(storagePath string, chunkInfo models.FileChunkInfo, file *mul
 	defer chunkFile.Close()
 
 	// 复制分片内容，使用优化的缓冲区
-	buf := make([]byte, ChunkBufferSize)
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:ChunkBufferSize]
 	_, err = io.CopyBuffer(chunkFile, src, buf)
 
 	// 必须在此处显式关闭文件句柄，释放 Windows 系统下的文件排他锁，否则 mergeFileChunks 内的 RemoveAll 将因锁定无法清理分片缓存
@@ -382,7 +396,9 @@ func mergeFileChunks(chunkDir, targetFile string, totalChunk int) error {
 	defer target.Close()
 
 	// 使用1MB缓冲区提高合并性能
-	buf := make([]byte, 1024*1024)
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:1024*1024]
 
 	fileName := filepath.Base(chunkDir)
 
@@ -497,7 +513,9 @@ func DownloadFile(c *gin.Context, storagePath, filename, rangeHeader string) err
 func copyWithCancel(ctx context.Context, dst io.Writer, src io.Reader, _ int64) error {
 	// 使用更大的缓冲区大小以提高传输性能
 	// 使用优化的缓冲区大小
-	buf := make([]byte, DefaultBufferSize)
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := *bufPtr
 
 	// 已传输的字节数
 	var written int64
@@ -731,6 +749,7 @@ func CheckFileExists(storagePath string, filename string) error {
 }
 
 // calculateFileMD5 计算文件的真实MD5值（基于文件内容）
+// Performance optimization: Uses pooled buffer pointers to eliminate 4MB slice allocations on the heap.
 func calculateFileMD5(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -739,7 +758,10 @@ func calculateFileMD5(filePath string) (string, error) {
 	defer file.Close()
 
 	hash := md5.New()
-	buf := make([]byte, 4*1024*1024) // 4MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := file.Read(buf)
 		if n > 0 {
@@ -756,6 +778,7 @@ func calculateFileMD5(filePath string) (string, error) {
 }
 
 // calculateFileMD5WithProgress 带进度回调的真实MD5计算
+// Performance optimization: Uses pooled buffer pointers down-sliced to 2MB to eliminate 2MB slice allocations on the heap.
 func calculateFileMD5WithProgress(filePath string, progressCallback func(float64)) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -770,7 +793,9 @@ func calculateFileMD5WithProgress(filePath string, progressCallback func(float64
 	totalSize := info.Size()
 
 	hash := md5.New()
-	buf := make([]byte, ChunkBufferSize) // 2MB buffer
+	bufPtr := md5BufferPool.Get().(*[]byte)
+	defer md5BufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:ChunkBufferSize]
 	var readBytes int64
 
 	for {
