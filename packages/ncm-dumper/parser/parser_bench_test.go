@@ -28,3 +28,20 @@ func BenchmarkDecryptReader(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSequentialNCMParser_Parse(b *testing.B) {
+	mockData, err := generateMockNCMData()
+	if err != nil {
+		b.Fatalf("failed to generate mock NCM data: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := bytes.NewReader(mockData)
+		parser := &SequentialNCMParser{}
+		_, err := parser.Parse(r)
+		if err != nil {
+			b.Fatalf("failed to parse: %v", err)
+		}
+	}
+}

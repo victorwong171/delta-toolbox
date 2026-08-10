@@ -2,6 +2,10 @@ package parser
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
+	"encoding/binary"
 	"io"
 	"testing"
 )
@@ -75,5 +79,99 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 				t.Errorf("optimized DecryptReader output does not match reference for size %d", tc.size)
 			}
 		})
+	}
+}
+
+func PKCS7Padding(src []byte, blockSize int) []byte {
+	padding := blockSize - len(src)%blockSize
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	return append(src, padtext...)
+}
+
+func encryptAes128EcbLocal(block cipher.Block, data []byte) []byte {
+	data = PKCS7Padding(data, aes.BlockSize)
+	encrypted := make([]byte, len(data))
+	bs := block.BlockSize()
+	for i := 0; i < len(data); i += bs {
+		block.Encrypt(encrypted[i:i+bs], data[i:i+bs])
+	}
+	return encrypted
+}
+
+func generateMockNCMData() ([]byte, error) {
+	var buf bytes.Buffer
+
+	// 1. Header (10 bytes)
+	buf.WriteString("CTENFDAM\x01\x02")
+
+	// 2. Key Data
+	rc4Key := []byte("1234567890123456")
+	deKeyData := append([]byte("neteasecloudmusic"), rc4Key...)
+	keyDataEnc := encryptAes128EcbLocal(aesCoreBlock, deKeyData)
+	for i := range keyDataEnc {
+		keyDataEnc[i] ^= 0x64
+	}
+	// Write length
+	err := binary.Write(&buf, binary.LittleEndian, uint32(len(keyDataEnc)))
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(keyDataEnc)
+
+	// 3. Metadata (modifyData)
+	metaJSON := []byte(`{"musicName":"Test Song","format":"mp3","artist":[["Singer",123]]}`)
+	deModifyData := append([]byte("music:"), metaJSON...)
+	modifyDataEnc := encryptAes128EcbLocal(aesModifyBlock, deModifyData)
+	b64Str := base64.StdEncoding.EncodeToString(modifyDataEnc)
+	modifyData := append([]byte("163 key(Don't modify):"), []byte(b64Str)...)
+	for i := range modifyData {
+		modifyData[i] ^= 0x63
+	}
+	// Write length
+	err = binary.Write(&buf, binary.LittleEndian, uint32(len(modifyData)))
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(modifyData)
+
+	// 4. Gap (9 bytes)
+	buf.Write(make([]byte, 9))
+
+	// 5. Cover (optional, let's write 10 bytes of cover data)
+	coverData := []byte("coverimage")
+	err = binary.Write(&buf, binary.LittleEndian, uint32(len(coverData)))
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(coverData)
+
+	// 6. Audio Stream Data
+	buf.Write([]byte("encrypted_audio_bytes_here"))
+
+	return buf.Bytes(), nil
+}
+
+func TestSequentialNCMParser(t *testing.T) {
+	mockData, err := generateMockNCMData()
+	if err != nil {
+		t.Fatalf("failed to generate mock NCM data: %v", err)
+	}
+
+	parser := &SequentialNCMParser{}
+	parsed, err := parser.Parse(bytes.NewReader(mockData))
+	if err != nil {
+		t.Fatalf("failed to parse mock NCM data: %v", err)
+	}
+
+	if parsed.Metadata().Name != "Test Song" {
+		t.Errorf("expected metadata musicName 'Test Song', got '%s'", parsed.Metadata().Name)
+	}
+
+	if parsed.AudioFormat() != "mp3" {
+		t.Errorf("expected audioFormat 'mp3', got '%s'", parsed.AudioFormat())
+	}
+
+	if !bytes.Equal(parsed.Cover(), []byte("coverimage")) {
+		t.Errorf("expected cover 'coverimage', got '%s'", string(parsed.Cover()))
 	}
 }
