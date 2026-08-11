@@ -187,10 +187,14 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 // Helper functions for binary reading and decryption
 
 func readLenAndData(r io.Reader) ([]byte, error) {
-	var dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
+	// Optimization: replacing reflection-based 'binary.Read' with direct read into a
+	// stack-allocated array followed by manual decoding (binary.LittleEndian.Uint32)
+	// eliminates reflection overhead and avoids heap allocation.
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return nil, err
 	}
+	dataLen := binary.LittleEndian.Uint32(buf[:])
 	if dataLen == 0 {
 		return []byte{}, nil
 	}

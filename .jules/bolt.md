@@ -21,3 +21,7 @@ Only critical learnings are logged here to avoid clutter.
 ## 2026-07-17 - Bounds-Check Free Sliced Range Cleanup Loop
 **Learning:** Cleanup/fallback loops handling remaining bytes of an unrolled loop often trigger bounds check warnings if we index with variables updated across different loops. By sub-slicing the remainder (e.g., `rem := p[i:]`) and using a standard `range` iteration `for j := range rem`, the Go compiler statically guarantees 100% bounds-check free indexing inside the cleanup loop.
 **Action:** Always slice the remainder of unrolled loops and iterate over the sub-slice using `range` to eliminate bounds checks on leftover elements.
+
+## 2026-08-11 - Go Reflection-Based 'binary.Read' Overhead and Heap Escape
+**Learning:** In Go, calling `binary.Read(r, binary.LittleEndian, &dataLen)` on a primitive variable (like a `uint32`) incurs huge overhead because the third argument is an `interface{}`/`any` which causes the pointer to escape to the heap. Furthermore, `binary.Read` uses runtime reflection to determine the type. Replacing this with a stack-allocated byte array `var buf [4]byte`, reading with `io.ReadFull`, and decoding with `binary.LittleEndian.Uint32` eliminates all heap allocations, avoids reflection, and results in cleaner, faster, and more efficient parsing.
+**Action:** Always replace reflection-based `binary.Read` on primitives with direct `io.ReadFull` into a stack-allocated array followed by manual decoding (`binary.LittleEndian.Uint16`, `Uint32`, `Uint64`, etc.).
