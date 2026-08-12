@@ -77,3 +77,63 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 		})
 	}
 }
+
+func TestSequentialNCMParser(t *testing.T) {
+	rc4Key := "test_key_12345"
+	metaJSON := `{"musicId":999,"musicName":"Test Song","album":"Awesome Album","artist":[["Singer A",1001]],"format":"flac"}`
+	cover := []byte("fake_image_bytes")
+	audio := []byte("this is some mock encrypted audio data")
+
+	ncmBytes, err := generateMockNCMData(rc4Key, metaJSON, cover, audio)
+	if err != nil {
+		t.Fatalf("failed to generate mock NCM data: %v", err)
+	}
+
+	parser := &SequentialNCMParser{}
+	parsed, err := parser.Parse(bytes.NewReader(ncmBytes))
+	if err != nil {
+		t.Fatalf("failed to parse NCM: %v", err)
+	}
+
+	if parsed.AudioFormat() != "flac" {
+		t.Errorf("expected format flac, got %s", parsed.AudioFormat())
+	}
+
+	if parsed.Metadata().Name != "Test Song" {
+		t.Errorf("expected song name 'Test Song', got %s", parsed.Metadata().Name)
+	}
+
+	if len(parsed.Metadata().Artists) != 1 || parsed.Metadata().Artists[0].Name != "Singer A" {
+		t.Errorf("expected artist 'Singer A', got %v", parsed.Metadata().Artists)
+	}
+
+	if !bytes.Equal(parsed.Cover(), cover) {
+		t.Errorf("cover data mismatch")
+	}
+
+	decrypted, err := io.ReadAll(parsed.DecryptedStream())
+	if err != nil {
+		t.Fatalf("failed to read decrypted stream: %v", err)
+	}
+
+	// Verify that DecryptReader decrypted the stream correctly
+	var xorLookup [256]byte
+	box := buildKeyBox([]byte(rc4Key))
+	for j := 0; j < 256; j++ {
+		bj := byte(j)
+		xorLookup[bj] = box[(box[bj]+box[(box[bj]+bj)&0xff])&0xff]
+	}
+
+	refReader := &ReferenceDecryptReader{
+		r:         bytes.NewReader(audio),
+		xorLookup: &xorLookup,
+	}
+	expectedDecrypted, err := io.ReadAll(refReader)
+	if err != nil {
+		t.Fatalf("failed to read from reference reader: %v", err)
+	}
+
+	if !bytes.Equal(decrypted, expectedDecrypted) {
+		t.Errorf("decrypted audio mismatch")
+	}
+}
