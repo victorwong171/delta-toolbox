@@ -2,6 +2,7 @@ package parser
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -12,7 +13,22 @@ import (
 var (
 	aesCoreKey   = []byte{0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57}
 	aesModifyKey = []byte{0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28}
+
+	aesCoreBlock   cipher.Block
+	aesModifyBlock cipher.Block
 )
+
+func init() {
+	var err error
+	aesCoreBlock, err = aes.NewCipher(aesCoreKey)
+	if err != nil {
+		panic(err)
+	}
+	aesModifyBlock, err = aes.NewCipher(aesModifyKey)
+	if err != nil {
+		panic(err)
+	}
+}
 
 // ParsedNCM 代表解析后的 NCM 只读视图接口，解耦音频流与元数据
 type ParsedNCM interface {
@@ -110,8 +126,8 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-	xorBytes(keyData, 0x64)                                 // 与 0x64 进行异或还原
-	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData) // 使用 AES-128-ECB 解密
+	xorBytes(keyData, 0x64)                                   // 与 0x64 进行异或还原
+	deKeyData, err := decryptAes128Ecb(aesCoreBlock, keyData) // 使用 AES-128-ECB 解密
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt key: %w", err)
 	}
@@ -135,7 +151,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 			return nil, fmt.Errorf("failed to base64 decode metadata: %w", err)
 		}
 		// 使用特殊的 AES 密钥对其进行解密
-		deData, err := decryptAes128Ecb(aesModifyKey, deModifyData)
+		deData, err := decryptAes128Ecb(aesModifyBlock, deModifyData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt metadata: %w", err)
 		}
@@ -187,10 +203,11 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 // Helper functions for binary reading and decryption
 
 func readLenAndData(r io.Reader) ([]byte, error) {
-	var dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return nil, err
 	}
+	dataLen := binary.LittleEndian.Uint32(buf[:])
 	if dataLen == 0 {
 		return []byte{}, nil
 	}
@@ -201,18 +218,13 @@ func readLenAndData(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func decryptAes128Ecb(key, data []byte) ([]byte, error) {
+func decryptAes128Ecb(block cipher.Block, data []byte) ([]byte, error) {
 	data = data[:len(data)/aes.BlockSize*aes.BlockSize]
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	decrypted := make([]byte, len(data))
 	bs := block.BlockSize()
 	for i := 0; i <= len(data)-bs; i += bs {
-		block.Decrypt(decrypted[i:i+bs], data[i:i+bs])
+		block.Decrypt(data[i:i+bs], data[i:i+bs])
 	}
-	return _PKCS7UnPadding(decrypted), nil
+	return _PKCS7UnPadding(data), nil
 }
 
 func _PKCS7UnPadding(src []byte) []byte {
