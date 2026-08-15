@@ -233,8 +233,10 @@ func xorBytes(data []byte, val uint8) {
 	}
 }
 
-func buildKeyBox(key []byte) []byte {
-	box := make([]byte, 256)
+// buildKeyBox generates RC4 key box in a fixed-size stack-allocated array [256]byte
+// to prevent heap escape allocation during key derivation.
+func buildKeyBox(key []byte) [256]byte {
+	var box [256]byte
 	for i := 0; i < 256; i++ {
 		box[i] = byte(i)
 	}
