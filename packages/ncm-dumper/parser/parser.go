@@ -187,10 +187,13 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 // Helper functions for binary reading and decryption
 
 func readLenAndData(r io.Reader) ([]byte, error) {
-	var dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
+	// Performance optimization: Direct read into stack-allocated buffer + Uint32
+	// eliminates reflection overhead and heap allocation from binary.Read
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return nil, err
 	}
+	dataLen := binary.LittleEndian.Uint32(buf[:])
 	if dataLen == 0 {
 		return []byte{}, nil
 	}
@@ -207,12 +210,13 @@ func decryptAes128Ecb(key, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	decrypted := make([]byte, len(data))
+	// Performance optimization: Standard AES block ciphers support in-place decryption
+	// when src and dst point to the same memory, eliminating intermediate output slice allocation.
 	bs := block.BlockSize()
 	for i := 0; i <= len(data)-bs; i += bs {
-		block.Decrypt(decrypted[i:i+bs], data[i:i+bs])
+		block.Decrypt(data[i:i+bs], data[i:i+bs])
 	}
-	return _PKCS7UnPadding(decrypted), nil
+	return _PKCS7UnPadding(data), nil
 }
 
 func _PKCS7UnPadding(src []byte) []byte {
@@ -233,8 +237,10 @@ func xorBytes(data []byte, val uint8) {
 	}
 }
 
-func buildKeyBox(key []byte) []byte {
-	box := make([]byte, 256)
+func buildKeyBox(key []byte) [256]byte {
+	// Performance optimization: Return fixed-size array [256]byte instead of []byte
+	// to prevent heap escape allocation during key box generation.
+	var box [256]byte
 	for i := 0; i < 256; i++ {
 		box[i] = byte(i)
 	}

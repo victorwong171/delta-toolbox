@@ -21,3 +21,7 @@ Only critical learnings are logged here to avoid clutter.
 ## 2026-07-17 - Bounds-Check Free Sliced Range Cleanup Loop
 **Learning:** Cleanup/fallback loops handling remaining bytes of an unrolled loop often trigger bounds check warnings if we index with variables updated across different loops. By sub-slicing the remainder (e.g., `rem := p[i:]`) and using a standard `range` iteration `for j := range rem`, the Go compiler statically guarantees 100% bounds-check free indexing inside the cleanup loop.
 **Action:** Always slice the remainder of unrolled loops and iterate over the sub-slice using `range` to eliminate bounds checks on leftover elements.
+
+## 2026-07-18 - Go In-Place Block Decryption and Stack Array Return
+**Learning:** In Go cryptography, standard block cipher interfaces (`cipher.Block.Decrypt`) explicitly support in-place operation where `dst` and `src` point to the same memory segment (e.g. `block.Decrypt(data[i:i+bs], data[i:i+bs])`), eliminating intermediate output slice allocation. Additionally, replacing `binary.Read` with stack array direct reads (`binary.LittleEndian.Uint32`) and returning fixed-size arrays (`[256]byte`) from helper functions eliminates reflection overhead and heap escape allocations completely.
+**Action:** When performing block cipher operations or generating fixed-size key lookups in Go, always decrypt in-place and return fixed-size arrays rather than heap slices.
