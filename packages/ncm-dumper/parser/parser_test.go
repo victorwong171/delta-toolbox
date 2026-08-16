@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"crypto/aes"
 	"io"
 	"testing"
 )
@@ -75,5 +76,58 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 				t.Errorf("optimized DecryptReader output does not match reference for size %d", tc.size)
 			}
 		})
+	}
+}
+
+func TestBuildKeyBox(t *testing.T) {
+	key := []byte("test_key_12345")
+	box := buildKeyBox(key)
+	if len(box) != 256 {
+		t.Fatalf("expected box length 256, got %d", len(box))
+	}
+
+	// Verify permutations contain all bytes from 0 to 255
+	seen := make(map[byte]bool)
+	for _, b := range box {
+		seen[b] = true
+	}
+	if len(seen) != 256 {
+		t.Errorf("expected 256 unique bytes in key box, got %d", len(seen))
+	}
+}
+
+func TestReadLenAndData(t *testing.T) {
+	buf := new(bytes.Buffer)
+	buf.Write([]byte{0x04, 0x00, 0x00, 0x00}) // length 4 (little endian)
+	buf.Write([]byte("test"))
+
+	data, err := readLenAndData(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(data) != "test" {
+		t.Errorf("expected 'test', got '%s'", string(data))
+	}
+}
+
+func TestDecryptAes128Ecb(t *testing.T) {
+	key := aesCoreKey
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("unexpected cipher creation error: %v", err)
+	}
+
+	plain := []byte("hello_world!1234") // 12 bytes + 4 bytes padding (0x04)
+	copy(plain[12:], []byte{0x04, 0x04, 0x04, 0x04})
+
+	encrypted := make([]byte, len(plain))
+	block.Encrypt(encrypted, plain)
+
+	decrypted, err := decryptAes128Ecb(key, encrypted)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(decrypted) != "hello_world!" {
+		t.Fatalf("expected 'hello_world!', got '%s'", string(decrypted))
 	}
 }
