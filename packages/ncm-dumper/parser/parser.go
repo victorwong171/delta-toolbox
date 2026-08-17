@@ -2,6 +2,7 @@ package parser
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -12,7 +13,23 @@ import (
 var (
 	aesCoreKey   = []byte{0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57}
 	aesModifyKey = []byte{0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28}
+
+	// Pre-compiled cipher blocks to eliminate repeated aes.NewCipher allocations during parsing
+	aesCoreBlock   cipher.Block
+	aesModifyBlock cipher.Block
 )
+
+func init() {
+	var err error
+	aesCoreBlock, err = aes.NewCipher(aesCoreKey)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create core AES cipher: %v", err))
+	}
+	aesModifyBlock, err = aes.NewCipher(aesModifyKey)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create modify AES cipher: %v", err))
+	}
+}
 
 // ParsedNCM 代表解析后的 NCM 只读视图接口，解耦音频流与元数据
 type ParsedNCM interface {
@@ -50,7 +67,7 @@ type DecryptReader struct {
 	streamOffset int        // 全局流偏移量，保障分块并发读取时异或密钥索引能完美咬合
 }
 
-// Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吐率
+// Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吞率
 // 此外，将解密循环展开为 8，减少了循环控制开销并启用指令级并行 (ILP)
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
@@ -110,8 +127,8 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-	xorBytes(keyData, 0x64)                                 // 与 0x64 进行异或还原
-	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData) // 使用 AES-128-ECB 解密
+	xorBytes(keyData, 0x64)                                   // 与 0x64 进行异或还原
+	deKeyData, err := decryptAes128Ecb(aesCoreBlock, keyData) // 使用 pre-compiled AES core block 解密
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt key: %w", err)
 	}
@@ -135,7 +152,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 			return nil, fmt.Errorf("failed to base64 decode metadata: %w", err)
 		}
 		// 使用特殊的 AES 密钥对其进行解密
-		deData, err := decryptAes128Ecb(aesModifyKey, deModifyData)
+		deData, err := decryptAes128Ecb(aesModifyBlock, deModifyData)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt metadata: %w", err)
 		}
@@ -159,7 +176,7 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 		return nil, fmt.Errorf("failed to read cover: %w", err)
 	}
 
-	// Build key box and lookup table
+	// Build key box and lookup table (buildKeyBox returns [256]byte stack-allocated array)
 	box := buildKeyBox(rc4Key)
 	var xorLookup [256]byte
 	for j := 0; j < 256; j++ {
@@ -186,11 +203,14 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 
 // Helper functions for binary reading and decryption
 
+// readLenAndData reads uint32 length using direct stack array decoding to avoid
+// binary.Read reflection overhead and dynamic heap allocations.
 func readLenAndData(r io.Reader) ([]byte, error) {
-	var dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
 	}
+	dataLen := binary.LittleEndian.Uint32(lenBuf[:])
 	if dataLen == 0 {
 		return []byte{}, nil
 	}
@@ -201,18 +221,16 @@ func readLenAndData(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func decryptAes128Ecb(key, data []byte) ([]byte, error) {
-	data = data[:len(data)/aes.BlockSize*aes.BlockSize]
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	decrypted := make([]byte, len(data))
+// decryptAes128Ecb performs 100% allocation-free in-place AES decryption on the input buffer
+// using pre-compiled cipher.Block instances.
+func decryptAes128Ecb(block cipher.Block, data []byte) ([]byte, error) {
 	bs := block.BlockSize()
-	for i := 0; i <= len(data)-bs; i += bs {
-		block.Decrypt(decrypted[i:i+bs], data[i:i+bs])
+	n := (len(data) / bs) * bs
+	for i := 0; i <= n-bs; i += bs {
+		// Perform in-place decryption: src and dst point to the same slice memory
+		block.Decrypt(data[i:i+bs], data[i:i+bs])
 	}
-	return _PKCS7UnPadding(decrypted), nil
+	return _PKCS7UnPadding(data[:n]), nil
 }
 
 func _PKCS7UnPadding(src []byte) []byte {
@@ -233,8 +251,9 @@ func xorBytes(data []byte, val uint8) {
 	}
 }
 
-func buildKeyBox(key []byte) []byte {
-	box := make([]byte, 256)
+// buildKeyBox returns a [256]byte fixed-size array on the stack to prevent heap escape allocations.
+func buildKeyBox(key []byte) [256]byte {
+	var box [256]byte
 	for i := 0; i < 256; i++ {
 		box[i] = byte(i)
 	}

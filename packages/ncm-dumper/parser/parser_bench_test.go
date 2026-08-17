@@ -28,3 +28,18 @@ func BenchmarkDecryptReader(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSequentialNCMParserParse(b *testing.B) {
+	streamData := buildMockNCMStream()
+	parser := &SequentialNCMParser{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := bytes.NewReader(streamData)
+		_, err := parser.Parse(r)
+		if err != nil {
+			b.Fatalf("Parse error: %v", err)
+		}
+	}
+}

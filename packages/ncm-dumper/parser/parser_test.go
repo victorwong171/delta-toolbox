@@ -77,3 +77,57 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 		})
 	}
 }
+
+func TestReadLenAndData(t *testing.T) {
+	buf := new(bytes.Buffer)
+	buf.Write([]byte{0x04, 0x00, 0x00, 0x00}) // Little endian uint32 = 4
+	buf.Write([]byte("test"))
+
+	data, err := readLenAndData(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(data) != "test" {
+		t.Fatalf("expected 'test', got '%s'", string(data))
+	}
+}
+
+func TestBuildKeyBox(t *testing.T) {
+	key := []byte("secret_key_123")
+	box := buildKeyBox(key)
+	if len(box) != 256 {
+		t.Fatalf("expected box length 256, got %d", len(box))
+	}
+}
+
+func TestSequentialNCMParser(t *testing.T) {
+	streamData := buildMockNCMStream()
+	parser := &SequentialNCMParser{}
+	parsed, err := parser.Parse(bytes.NewReader(streamData))
+	if err != nil {
+		t.Fatalf("SequentialNCMParser.Parse failed: %v", err)
+	}
+
+	meta := parsed.Metadata()
+	if meta == nil || meta.Name != "Test Song" {
+		t.Fatalf("expected musicName 'Test Song', got: %+v", meta)
+	}
+
+	if parsed.AudioFormat() != "mp3" {
+		t.Fatalf("expected audioFormat 'mp3', got '%s'", parsed.AudioFormat())
+	}
+
+	if len(parsed.Cover()) == 0 {
+		t.Fatalf("expected non-empty cover data")
+	}
+
+	audioStream := parsed.DecryptedStream()
+	audioBuf := make([]byte, 1024)
+	n, err := audioStream.Read(audioBuf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed reading decrypted stream: %v", err)
+	}
+	if n != 1024 {
+		t.Fatalf("expected 1024 bytes read, got %d", n)
+	}
+}
