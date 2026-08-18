@@ -75,6 +75,15 @@ var md5Cache = &MD5Cache{
 // 全局计算信号量
 var md5CalculationSemaphore = make(chan struct{}, MD5MaxConcurrent)
 
+// fileBufferPool holds pointers to 4MB byte slices to eliminate dynamic heap allocations
+// during heavy file I/O operations and MD5 checksum calculations.
+var fileBufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, DefaultBufferSize) // 4MB
+		return &buf
+	},
+}
+
 // getCacheKey 生成缓存键：fileName:size:modTime
 func getCacheKey(fileName string, size int64, modTime int64) string {
 	return fmt.Sprintf("%s:%d:%d", fileName, size, modTime)
@@ -264,9 +273,11 @@ func SaveFile(storagePath string, file *multipart.FileHeader, rangeHeader string
 		}
 	}
 
-	// 将上传的文件内容复制到目标文件，使用更大的缓冲区提高性能
-	// 使用4MB缓冲区进行复制，提高大文件传输性能
-	buf := make([]byte, 4*1024*1024)
+	// 将上传的文件内容复制到目标文件，使用 sync.Pool 复用 4MB 缓冲区消除堆分配
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:DefaultBufferSize]
+
 	_, err = io.CopyBuffer(out, src, buf)
 	return err
 }
@@ -314,8 +325,11 @@ func SaveFileChunk(storagePath string, chunkInfo models.FileChunkInfo, file *mul
 	}
 	defer chunkFile.Close()
 
-	// 复制分片内容，使用优化的缓冲区
-	buf := make([]byte, ChunkBufferSize)
+	// 复制分片内容，使用 sync.Pool 复用缓冲区消除堆分配
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:ChunkBufferSize]
+
 	_, err = io.CopyBuffer(chunkFile, src, buf)
 
 	// 必须在此处显式关闭文件句柄，释放 Windows 系统下的文件排他锁，否则 mergeFileChunks 内的 RemoveAll 将因锁定无法清理分片缓存
@@ -381,8 +395,10 @@ func mergeFileChunks(chunkDir, targetFile string, totalChunk int) error {
 	}
 	defer target.Close()
 
-	// 使用1MB缓冲区提高合并性能
-	buf := make([]byte, 1024*1024)
+	// 使用 sync.Pool 复用 1MB 缓冲区提高合并性能并消除堆分配
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:1024*1024]
 
 	fileName := filepath.Base(chunkDir)
 
@@ -495,9 +511,10 @@ func DownloadFile(c *gin.Context, storagePath, filename, rangeHeader string) err
 
 // copyWithCancel 带取消功能的复制函数，支持大文件长时间传输
 func copyWithCancel(ctx context.Context, dst io.Writer, src io.Reader, _ int64) error {
-	// 使用更大的缓冲区大小以提高传输性能
-	// 使用优化的缓冲区大小
-	buf := make([]byte, DefaultBufferSize)
+	// 使用 sync.Pool 复用 4MB 缓冲区以消除堆分配并提高传输性能
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:DefaultBufferSize]
 
 	// 已传输的字节数
 	var written int64
@@ -739,7 +756,9 @@ func calculateFileMD5(filePath string) (string, error) {
 	defer file.Close()
 
 	hash := md5.New()
-	buf := make([]byte, 4*1024*1024) // 4MB buffer
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:DefaultBufferSize]
 	for {
 		n, err := file.Read(buf)
 		if n > 0 {
@@ -770,7 +789,9 @@ func calculateFileMD5WithProgress(filePath string, progressCallback func(float64
 	totalSize := info.Size()
 
 	hash := md5.New()
-	buf := make([]byte, ChunkBufferSize) // 2MB buffer
+	bufPtr := fileBufferPool.Get().(*[]byte)
+	defer fileBufferPool.Put(bufPtr)
+	buf := (*bufPtr)[:ChunkBufferSize]
 	var readBytes int64
 
 	for {
