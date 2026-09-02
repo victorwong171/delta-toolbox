@@ -207,12 +207,14 @@ func decryptAes128Ecb(key, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	decrypted := make([]byte, len(data))
+	// In-place AES ECB decryption: standard Go cipher.Block implementation supports
+	// dst and src pointing to the exact same slice region (overlapping memory).
+	// Decrypting in-place eliminates 1 heap allocation per AES call.
 	bs := block.BlockSize()
 	for i := 0; i <= len(data)-bs; i += bs {
-		block.Decrypt(decrypted[i:i+bs], data[i:i+bs])
+		block.Decrypt(data[i:i+bs], data[i:i+bs])
 	}
-	return _PKCS7UnPadding(decrypted), nil
+	return _PKCS7UnPadding(data), nil
 }
 
 func _PKCS7UnPadding(src []byte) []byte {
