@@ -62,15 +62,16 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
 		_ = lookup
 
-		// Loop unrolling optimization (unrolled by 8):
-		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
-		// parallelism (ILP) by exposing independent operations to the CPU scheduler/pipeline.
-		// Since 'offset' is a byte, expressions like offset+1 etc. are checked and statically proven
-		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
+		// Loop unrolling optimization (unrolled by 16):
+		// This reduces loop overhead by another ~50% (fewer condition checks and increments)
+		// and maximizes instruction-level parallelism (ILP) across superscalar CPU execution pipelines.
+		// Sub-slicing sub := p[i : i+16] combined with single assertion _ = sub[15] guarantees zero bounds check
+		// overhead on the target slice. Since 'offset' is a byte, expressions like offset+1 etc. are statically
+		// proven by Go's compiler to be within [0, 255], ensuring zero lookup bounds check overhead.
 		i := 0
-		for ; i <= n-8; i += 8 {
-			sub := p[i : i+8]
-			_ = sub[7]
+		for ; i <= n-16; i += 16 {
+			sub := p[i : i+16]
+			_ = sub[15]
 			sub[0] ^= lookup[byte(offset+1)]
 			sub[1] ^= lookup[byte(offset+2)]
 			sub[2] ^= lookup[byte(offset+3)]
@@ -79,7 +80,15 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 			sub[5] ^= lookup[byte(offset+6)]
 			sub[6] ^= lookup[byte(offset+7)]
 			sub[7] ^= lookup[byte(offset+8)]
-			offset += 8
+			sub[8] ^= lookup[byte(offset+9)]
+			sub[9] ^= lookup[byte(offset+10)]
+			sub[10] ^= lookup[byte(offset+11)]
+			sub[11] ^= lookup[byte(offset+12)]
+			sub[12] ^= lookup[byte(offset+13)]
+			sub[13] ^= lookup[byte(offset+14)]
+			sub[14] ^= lookup[byte(offset+15)]
+			sub[15] ^= lookup[byte(offset+16)]
+			offset += 16
 		}
 		// Clean up remaining bytes using range over a sub-slice to achieve 100% bounds-check free loop
 		if i < n {
