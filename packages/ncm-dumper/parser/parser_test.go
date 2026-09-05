@@ -39,9 +39,11 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 		{"Empty", 0},
 		{"Tiny (3 bytes)", 3},
 		{"Exactly 8 bytes", 8},
+		{"Exactly 16 bytes", 16},
 		{"Medium (15 bytes)", 15},
+		{"Medium (25 bytes)", 25},
 		{"Large (1024 bytes)", 1024},
-		{"Non-multiple of 8 (1029 bytes)", 1029},
+		{"Non-multiple of 16 (1029 bytes)", 1029},
 	}
 
 	for _, tc := range testCases {
@@ -75,5 +77,36 @@ func TestDecryptReaderCorrectness(t *testing.T) {
 				t.Errorf("optimized DecryptReader output does not match reference for size %d", tc.size)
 			}
 		})
+	}
+}
+
+func TestSequentialNCMParser(t *testing.T) {
+	mockStream := generateMockNCMStream(1024)
+	parser := &SequentialNCMParser{}
+
+	parsed, err := parser.Parse(bytes.NewReader(mockStream))
+	if err != nil {
+		t.Fatalf("failed to parse mock NCM stream: %v", err)
+	}
+
+	if parsed.Metadata() == nil || parsed.Metadata().Name != "Test Song" {
+		t.Errorf("expected song name 'Test Song', got %v", parsed.Metadata())
+	}
+
+	if parsed.AudioFormat() != "mp3" {
+		t.Errorf("expected format 'mp3', got %s", parsed.AudioFormat())
+	}
+
+	if len(parsed.Cover()) == 0 {
+		t.Errorf("expected cover data, got empty")
+	}
+
+	audioBuf := make([]byte, 1024)
+	n, err := io.ReadFull(parsed.DecryptedStream(), audioBuf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed to read decrypted stream: %v", err)
+	}
+	if n != 1024 {
+		t.Errorf("expected 1024 decrypted bytes, got %d", n)
 	}
 }
