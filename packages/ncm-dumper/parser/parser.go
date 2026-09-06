@@ -2,6 +2,7 @@ package parser
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -12,7 +13,23 @@ import (
 var (
 	aesCoreKey   = []byte{0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57}
 	aesModifyKey = []byte{0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28}
+
+	// Pre-compile stateless cipher blocks at init to avoid repeated allocation in parsing routines
+	aesCoreBlock   cipher.Block
+	aesModifyBlock cipher.Block
 )
+
+func init() {
+	var err error
+	aesCoreBlock, err = aes.NewCipher(aesCoreKey)
+	if err != nil {
+		panic(err)
+	}
+	aesModifyBlock, err = aes.NewCipher(aesModifyKey)
+	if err != nil {
+		panic(err)
+	}
+}
 
 // ParsedNCM 代表解析后的 NCM 只读视图接口，解耦音频流与元数据
 type ParsedNCM interface {
@@ -110,11 +127,8 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
-	xorBytes(keyData, 0x64)                                 // 与 0x64 进行异或还原
-	deKeyData, err := decryptAes128Ecb(aesCoreKey, keyData) // 使用 AES-128-ECB 解密
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt key: %w", err)
-	}
+	xorBytes(keyData, 0x64)                              // 与 0x64 进行异或还原
+	deKeyData := decryptAes128Ecb(aesCoreBlock, keyData) // 使用预初始化的 AES-128-ECB 块进行原位解密
 	if len(deKeyData) < 17 {
 		return nil, fmt.Errorf("decrypted key is too short")
 	}
@@ -134,11 +148,8 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 		if _, err = base64.StdEncoding.Decode(deModifyData, modifyData[22:]); err != nil {
 			return nil, fmt.Errorf("failed to base64 decode metadata: %w", err)
 		}
-		// 使用特殊的 AES 密钥对其进行解密
-		deData, err := decryptAes128Ecb(aesModifyKey, deModifyData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt metadata: %w", err)
-		}
+		// 使用特殊的 AES 密钥对其进行原位解密
+		deData := decryptAes128Ecb(aesModifyBlock, deModifyData)
 		if len(deData) > 6 {
 			// 剔除前缀 "music:" 后反序列化为 Meta 结构体对象
 			if err := json.Unmarshal(deData[6:], &meta); err != nil {
@@ -186,11 +197,14 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 
 // Helper functions for binary reading and decryption
 
+// readLenAndData reads 4-byte length directly into a stack buffer to avoid reflection-based binary.Read
+// and dynamic allocations.
 func readLenAndData(r io.Reader) ([]byte, error) {
-	var dataLen uint32
-	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, err
 	}
+	dataLen := binary.LittleEndian.Uint32(lenBuf[:])
 	if dataLen == 0 {
 		return []byte{}, nil
 	}
@@ -201,18 +215,16 @@ func readLenAndData(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func decryptAes128Ecb(key, data []byte) ([]byte, error) {
-	data = data[:len(data)/aes.BlockSize*aes.BlockSize]
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	decrypted := make([]byte, len(data))
+// decryptAes128Ecb performs in-place AES decryption on the provided byte slice using pre-compiled cipher.Block,
+// eliminating output slice allocation.
+func decryptAes128Ecb(block cipher.Block, data []byte) []byte {
+	validLen := len(data) / aes.BlockSize * aes.BlockSize
+	data = data[:validLen]
 	bs := block.BlockSize()
-	for i := 0; i <= len(data)-bs; i += bs {
-		block.Decrypt(decrypted[i:i+bs], data[i:i+bs])
+	for i := 0; i <= validLen-bs; i += bs {
+		block.Decrypt(data[i:i+bs], data[i:i+bs])
 	}
-	return _PKCS7UnPadding(decrypted), nil
+	return _PKCS7UnPadding(data)
 }
 
 func _PKCS7UnPadding(src []byte) []byte {
@@ -233,12 +245,17 @@ func xorBytes(data []byte, val uint8) {
 	}
 }
 
-func buildKeyBox(key []byte) []byte {
-	box := make([]byte, 256)
+// buildKeyBox generates the 256-byte RC4 key substitution box on the stack, returning a fixed-size array
+// to eliminate heap allocation escaping.
+func buildKeyBox(key []byte) [256]byte {
+	var box [256]byte
 	for i := 0; i < 256; i++ {
 		box[i] = byte(i)
 	}
 	keyLen := byte(len(key))
+	if keyLen == 0 {
+		return box
+	}
 	var c, lastByte, keyOffset byte
 	for i := 0; i < 256; i++ {
 		c = (box[i] + lastByte + key[keyOffset]) & 0xff
