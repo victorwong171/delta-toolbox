@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -114,11 +115,12 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 // Parse 顺序线性提取密钥、元数据和专辑封面，并在单趟流式处理中完成，避免所有 Seek 重复磁盘读取
 func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	// 1. 读取 NCM 头部标志位魔数 (8 字节 magic + 2 字节 gap 填充)
-	header := make([]byte, 10)
-	if _, err := io.ReadFull(r, header); err != nil {
+	// 使用栈上分配数组避免堆内存分配
+	var header [10]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return nil, fmt.Errorf("failed to read NCM header: %w", err)
 	}
-	if string(header[:8]) != "CTENFDAM" {
+	if !bytes.Equal(header[:8], []byte("CTENFDAM")) {
 		return nil, fmt.Errorf("invalid NCM signature")
 	}
 
@@ -143,13 +145,13 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	var meta Meta
 	if len(modifyData) > 0 {
 		xorBytes(modifyData, 0x63) // 与 0x63 异或还原
-		// 剔除 "163 key(Don't modify):" 前缀 (22字节) 后进行 Base64 解码
-		deModifyData := make([]byte, base64.StdEncoding.DecodedLen(len(modifyData)-22))
-		if _, err = base64.StdEncoding.Decode(deModifyData, modifyData[22:]); err != nil {
+		// 剔除 "163 key(Don't modify):" 前缀 (22字节) 后原位进行 Base64 解码，消除 deModifyData 的堆分配
+		n, err := base64.StdEncoding.Decode(modifyData, modifyData[22:])
+		if err != nil {
 			return nil, fmt.Errorf("failed to base64 decode metadata: %w", err)
 		}
-		// 使用特殊的 AES 密钥对其进行原位解密
-		deData := decryptAes128Ecb(aesModifyBlock, deModifyData)
+		// 使用特殊的 AES 密钥对其原位解密
+		deData := decryptAes128Ecb(aesModifyBlock, modifyData[:n])
 		if len(deData) > 6 {
 			// 剔除前缀 "music:" 后反序列化为 Meta 结构体对象
 			if err := json.Unmarshal(deData[6:], &meta); err != nil {
@@ -159,8 +161,9 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	}
 
 	// 4. 跳过 9 字节的 CRC/Gap 空白校验块
-	gap := make([]byte, 9)
-	if _, err := io.ReadFull(r, gap); err != nil {
+	// 使用栈上分配数组避免堆内存分配
+	var gap [9]byte
+	if _, err := io.ReadFull(r, gap[:]); err != nil {
 		return nil, fmt.Errorf("failed to read gap: %w", err)
 	}
 
@@ -206,7 +209,7 @@ func readLenAndData(r io.Reader) ([]byte, error) {
 	}
 	dataLen := binary.LittleEndian.Uint32(lenBuf[:])
 	if dataLen == 0 {
-		return []byte{}, nil
+		return nil, nil
 	}
 	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(r, data); err != nil {
