@@ -89,7 +89,7 @@ func (m *Meta) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if len(aux.Artists) == 0 || string(aux.Artists) == "null" {
+	if len(aux.Artists) == 0 || bytes.Equal(aux.Artists, []byte("null")) {
 		return nil
 	}
 
