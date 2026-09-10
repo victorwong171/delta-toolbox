@@ -1,6 +1,7 @@
 package tag
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -41,12 +42,11 @@ func (m *tagManagerImpl) Inject(path string, format string, cover []byte, meta *
 	return TagAudioFileFromMeta(tagger, cover, meta)
 }
 
+var pngHeader = []byte{137, 80, 78, 71, 13, 10, 26, 10}
+
 // containPNGHeader 校验图片前缀魔数是否符合 PNG 签名（8字节）
 func containPNGHeader(data []byte) bool {
-	if len(data) < 8 {
-		return false
-	}
-	return string(data[:8]) == string([]byte{137, 80, 78, 71, 13, 10, 26, 10})
+	return bytes.HasPrefix(data, pngHeader)
 }
 
 // fetchUrl 辅助函数：网络拉取远程 HTTP(S) 专辑封面二进制数据
@@ -116,4 +116,3 @@ func TagAudioFileFromMeta(tag Tagger, imgData []byte, meta *parser.Meta) error {
 	// 7. 保存落盘
 	return tag.Save()
 }
-

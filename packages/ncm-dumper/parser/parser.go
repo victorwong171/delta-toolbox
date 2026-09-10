@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 var (
 	aesCoreKey   = []byte{0x68, 0x7A, 0x48, 0x52, 0x41, 0x6D, 0x73, 0x6F, 0x35, 0x6B, 0x49, 0x6E, 0x62, 0x61, 0x78, 0x57}
 	aesModifyKey = []byte{0x23, 0x31, 0x34, 0x6C, 0x6A, 0x6B, 0x5F, 0x21, 0x5C, 0x5D, 0x26, 0x30, 0x55, 0x3C, 0x27, 0x28}
+	ncmMagic     = []byte("CTENFDAM")
 
 	// Pre-compile stateless cipher blocks at init to avoid repeated allocation in parsing routines
 	aesCoreBlock   cipher.Block
@@ -79,15 +81,15 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
 		_ = lookup
 
-		// Loop unrolling optimization (unrolled by 8):
+		// Loop unrolling optimization (unrolled by 16):
 		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
 		// parallelism (ILP) by exposing independent operations to the CPU scheduler/pipeline.
 		// Since 'offset' is a byte, expressions like offset+1 etc. are checked and statically proven
 		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
 		i := 0
-		for ; i <= n-8; i += 8 {
-			sub := p[i : i+8]
-			_ = sub[7]
+		for ; i <= n-16; i += 16 {
+			sub := p[i : i+16]
+			_ = sub[15]
 			sub[0] ^= lookup[byte(offset+1)]
 			sub[1] ^= lookup[byte(offset+2)]
 			sub[2] ^= lookup[byte(offset+3)]
@@ -96,7 +98,15 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 			sub[5] ^= lookup[byte(offset+6)]
 			sub[6] ^= lookup[byte(offset+7)]
 			sub[7] ^= lookup[byte(offset+8)]
-			offset += 8
+			sub[8] ^= lookup[byte(offset+9)]
+			sub[9] ^= lookup[byte(offset+10)]
+			sub[10] ^= lookup[byte(offset+11)]
+			sub[11] ^= lookup[byte(offset+12)]
+			sub[12] ^= lookup[byte(offset+13)]
+			sub[13] ^= lookup[byte(offset+14)]
+			sub[14] ^= lookup[byte(offset+15)]
+			sub[15] ^= lookup[byte(offset+16)]
+			offset += 16
 		}
 		// Clean up remaining bytes using range over a sub-slice to achieve 100% bounds-check free loop
 		if i < n {
@@ -113,12 +123,12 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 
 // Parse 顺序线性提取密钥、元数据和专辑封面，并在单趟流式处理中完成，避免所有 Seek 重复磁盘读取
 func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
-	// 1. 读取 NCM 头部标志位魔数 (8 字节 magic + 2 字节 gap 填充)
-	header := make([]byte, 10)
-	if _, err := io.ReadFull(r, header); err != nil {
+	// 1. 读取 NCM 头部标志位魔数 (8 字节 magic + 2 字节 gap 填充)，使用栈数组避免堆分配
+	var header [10]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return nil, fmt.Errorf("failed to read NCM header: %w", err)
 	}
-	if string(header[:8]) != "CTENFDAM" {
+	if !bytes.Equal(header[:8], ncmMagic) {
 		return nil, fmt.Errorf("invalid NCM signature")
 	}
 
@@ -143,13 +153,13 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 	var meta Meta
 	if len(modifyData) > 0 {
 		xorBytes(modifyData, 0x63) // 与 0x63 异或还原
-		// 剔除 "163 key(Don't modify):" 前缀 (22字节) 后进行 Base64 解码
-		deModifyData := make([]byte, base64.StdEncoding.DecodedLen(len(modifyData)-22))
-		if _, err = base64.StdEncoding.Decode(deModifyData, modifyData[22:]); err != nil {
+		// 剔除 "163 key(Don't modify):" 前缀 (22字节) 后进行 Base64 原位解码，规避额外 slice 分配
+		n, err := base64.StdEncoding.Decode(modifyData, modifyData[22:])
+		if err != nil {
 			return nil, fmt.Errorf("failed to base64 decode metadata: %w", err)
 		}
 		// 使用特殊的 AES 密钥对其进行原位解密
-		deData := decryptAes128Ecb(aesModifyBlock, deModifyData)
+		deData := decryptAes128Ecb(aesModifyBlock, modifyData[:n])
 		if len(deData) > 6 {
 			// 剔除前缀 "music:" 后反序列化为 Meta 结构体对象
 			if err := json.Unmarshal(deData[6:], &meta); err != nil {
@@ -158,9 +168,9 @@ func (sp *SequentialNCMParser) Parse(r io.Reader) (ParsedNCM, error) {
 		}
 	}
 
-	// 4. 跳过 9 字节的 CRC/Gap 空白校验块
-	gap := make([]byte, 9)
-	if _, err := io.ReadFull(r, gap); err != nil {
+	// 4. 跳过 9 字节的 CRC/Gap 空白校验块，使用栈数组避免堆分配
+	var gap [9]byte
+	if _, err := io.ReadFull(r, gap[:]); err != nil {
 		return nil, fmt.Errorf("failed to read gap: %w", err)
 	}
 
@@ -206,7 +216,7 @@ func readLenAndData(r io.Reader) ([]byte, error) {
 	}
 	dataLen := binary.LittleEndian.Uint32(lenBuf[:])
 	if dataLen == 0 {
-		return []byte{}, nil
+		return nil, nil
 	}
 	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(r, data); err != nil {
