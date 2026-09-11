@@ -29,6 +29,15 @@ func BenchmarkDecryptReader(b *testing.B) {
 	}
 }
 
+func BenchmarkXorBytes(b *testing.B) {
+	data := make([]byte, 4096)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		xorBytes(data, 0x63)
+	}
+}
+
 func BenchmarkSequentialNCMParser(b *testing.B) {
 	mockData := createMockNCMData()
 	parser := &SequentialNCMParser{}

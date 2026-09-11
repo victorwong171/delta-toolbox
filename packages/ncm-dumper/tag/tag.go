@@ -100,7 +100,7 @@ func TagAudioFileFromMeta(tag Tagger, imgData []byte, meta *parser.Meta) error {
 	}
 
 	// 5. 注入艺术家/歌手列表（支持多歌手逗号分隔或多帧追加模式）
-	artists := make([]string, 0)
+	artists := make([]string, 0, len(meta.Artists))
 	for _, artist := range meta.Artists {
 		artists = append(artists, artist.Name)
 	}
