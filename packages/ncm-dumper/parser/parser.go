@@ -249,9 +249,56 @@ func _PKCS7UnPadding(src []byte) []byte {
 	return src[:(length - unpadding)]
 }
 
+// xorBytes performs in-place XOR on data with a constant byte value, using loop unrolling by 32,
+// sub-slicing encapsulation for BCE, and range iteration over the sub-sliced remainder.
 func xorBytes(data []byte, val uint8) {
-	for i := range data {
-		data[i] ^= val
+	n := len(data)
+	if n == 0 {
+		return
+	}
+	_ = data[n-1]
+	i := 0
+	for ; i <= n-32; i += 32 {
+		sub := data[i : i+32]
+		_ = sub[31]
+		sub[0] ^= val
+		sub[1] ^= val
+		sub[2] ^= val
+		sub[3] ^= val
+		sub[4] ^= val
+		sub[5] ^= val
+		sub[6] ^= val
+		sub[7] ^= val
+		sub[8] ^= val
+		sub[9] ^= val
+		sub[10] ^= val
+		sub[11] ^= val
+		sub[12] ^= val
+		sub[13] ^= val
+		sub[14] ^= val
+		sub[15] ^= val
+		sub[16] ^= val
+		sub[17] ^= val
+		sub[18] ^= val
+		sub[19] ^= val
+		sub[20] ^= val
+		sub[21] ^= val
+		sub[22] ^= val
+		sub[23] ^= val
+		sub[24] ^= val
+		sub[25] ^= val
+		sub[26] ^= val
+		sub[27] ^= val
+		sub[28] ^= val
+		sub[29] ^= val
+		sub[30] ^= val
+		sub[31] ^= val
+	}
+	if i < n {
+		rem := data[i:]
+		for j := range rem {
+			rem[j] ^= val
+		}
 	}
 }
 
