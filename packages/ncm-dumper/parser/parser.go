@@ -70,7 +70,7 @@ type DecryptReader struct {
 }
 
 // Read 执行流式解密，集成了编译器边界检查消除 (BCE) 指令级微优化以极大提升解密吞吐率
-// 此外，将解密循环展开为 8，减少了循环控制开销并启用指令级并行 (ILP)
+// 此外，将解密循环展开为 32，减少了循环控制开销并启用指令级并行 (ILP)
 func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 	n, err = dr.r.Read(p)
 	if n > 0 {
@@ -81,15 +81,16 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 		lookup := dr.xorLookup // Lift pointer dereference out of loop to avoid reloading receiver field
 		_ = lookup
 
-		// Loop unrolling optimization (unrolled by 16):
-		// This reduces loop overhead (fewer condition checks and increments) and allows instruction-level
-		// parallelism (ILP) by exposing independent operations to the CPU scheduler/pipeline.
-		// Since 'offset' is a byte, expressions like offset+1 etc. are checked and statically proven
-		// by Go's compiler to be completely within the range [0, 255], ensuring zero bounds check overhead.
+		// Loop unrolling optimization (unrolled by 32):
+		// This reduces loop control overhead (fewer condition checks and branch jumps) and maximizes instruction-level
+		// parallelism (ILP) by exposing independent XOR operations to the CPU pipeline.
+		// Sub-slicing (p[i:i+32]) combined with bounds assertion (_ = sub[31]) guarantees full Bounds Check Elimination (BCE).
+		// Since 'offset' is a byte, expressions like offset+1 etc. wrap around naturally and are statically proven
+		// to be within [0, 255], incurring zero bounds check overhead on the lookup table pointer.
 		i := 0
-		for ; i <= n-16; i += 16 {
-			sub := p[i : i+16]
-			_ = sub[15]
+		for ; i <= n-32; i += 32 {
+			sub := p[i : i+32]
+			_ = sub[31]
 			sub[0] ^= lookup[byte(offset+1)]
 			sub[1] ^= lookup[byte(offset+2)]
 			sub[2] ^= lookup[byte(offset+3)]
@@ -106,7 +107,23 @@ func (dr *DecryptReader) Read(p []byte) (n int, err error) {
 			sub[13] ^= lookup[byte(offset+14)]
 			sub[14] ^= lookup[byte(offset+15)]
 			sub[15] ^= lookup[byte(offset+16)]
-			offset += 16
+			sub[16] ^= lookup[byte(offset+17)]
+			sub[17] ^= lookup[byte(offset+18)]
+			sub[18] ^= lookup[byte(offset+19)]
+			sub[19] ^= lookup[byte(offset+20)]
+			sub[20] ^= lookup[byte(offset+21)]
+			sub[21] ^= lookup[byte(offset+22)]
+			sub[22] ^= lookup[byte(offset+23)]
+			sub[23] ^= lookup[byte(offset+24)]
+			sub[24] ^= lookup[byte(offset+25)]
+			sub[25] ^= lookup[byte(offset+26)]
+			sub[26] ^= lookup[byte(offset+27)]
+			sub[27] ^= lookup[byte(offset+28)]
+			sub[28] ^= lookup[byte(offset+29)]
+			sub[29] ^= lookup[byte(offset+30)]
+			sub[30] ^= lookup[byte(offset+31)]
+			sub[31] ^= lookup[byte(offset+32)]
+			offset += 32
 		}
 		// Clean up remaining bytes using range over a sub-slice to achieve 100% bounds-check free loop
 		if i < n {
